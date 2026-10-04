@@ -2,6 +2,7 @@
 
 import json
 import subprocess
+import tempfile
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import datetime
@@ -136,7 +137,10 @@ def read_frames(
     cmd += ["-i", str(path), "-map", "0:v:0", "-vf", ",".join(filters)]
     cmd += ["-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
     frame_bytes = w * h * 3
-    with subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as proc:
+    with (
+        tempfile.TemporaryFile() as err,
+        subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=err) as proc,
+    ):
         assert proc.stdout is not None
         index = 0
         while True:
@@ -146,6 +150,11 @@ def read_frames(
             yield start_s + index / fps, np.frombuffer(buf, np.uint8).reshape(h, w, 3)
             index += 1
         proc.stdout.close()
+        # Only reached after reading to the end; a caller that stops early never gets here.
+        if proc.wait() != 0:
+            err.seek(0)
+            message = err.read().decode(errors="replace").strip()[-2000:]
+            raise RuntimeError(f"ffmpeg failed: {message}")
 
 
 def encode_clip(

@@ -92,3 +92,17 @@ def test_hdr_video_is_detected_and_tone_mapped(tmp_path):
     out = tmp_path / "clip.mp4"
     media.encode_clip(path, info, 0.0, 1.0, out, long_edge=320, crf=30)
     assert not media.probe(out).hdr
+
+
+def test_read_frames_raises_when_ffmpeg_fails(tmp_path):
+    bogus = tmp_path / "bogus.mp4"
+    bogus.write_text("not a video")
+    info = media.VideoInfo(2.0, 30.0, 64, 36, None, None)
+    with pytest.raises(RuntimeError, match="ffmpeg failed"):
+        list(media.read_frames(bogus, info, 0.0, 1.0))
+
+
+def test_read_frames_can_stop_early_without_an_error(video):
+    frames = media.read_frames(video, media.probe(video), 0.0, 3.0)
+    next(frames)
+    frames.close()
