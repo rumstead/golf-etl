@@ -8,6 +8,8 @@ from scipy import signal
 
 SAMPLE_RATE = 48000  # iPhone audio is 48kHz; downsampling smears the transient
 HOP = 128
+CHUNK_S = 30.0  # the envelope is built in chunks so a 20 minute session fits in memory
+OVERLAP_S = 1.0
 
 
 @dataclass(frozen=True)
@@ -29,6 +31,7 @@ def find_onsets(
     delta: float,
     min_gap_s: float,
     lag_s: float = 0.0,
+    chunk_s: float = CHUNK_S,
 ) -> Onsets:
     """Onsets in time order, keeping only the strongest within any min_gap_s span.
 
@@ -37,9 +40,7 @@ def find_onsets(
     """
     if samples.size < sr // 10:
         return Onsets([], [])
-    sos = signal.butter(4, highpass_hz, btype="highpass", fs=sr, output="sos")
-    filtered = signal.sosfiltfilt(sos, samples).astype(np.float32)
-    env = librosa.onset.onset_strength(y=filtered, sr=sr, hop_length=HOP)
+    env = _envelope(samples, sr, highpass_hz, chunk_s)
     peak = float(env.max())
     if peak <= 0:
         return Onsets([], [])
@@ -62,3 +63,23 @@ def find_onsets(
         else:
             suppressed.append(onset)
     return Onsets(sorted(kept, key=lambda o: o.time_s), sorted(suppressed, key=lambda o: o.time_s))
+
+
+def _envelope(samples: np.ndarray, sr: int, highpass_hz: float, chunk_s: float) -> np.ndarray:
+    """Onset strength of the high-passed signal, one value per HOP samples.
+
+    Each chunk is filtered and analyzed with OVERLAP_S of context on both sides, then trimmed,
+    so frame i always lines up with sample i * HOP no matter where the chunk edges fall.
+    """
+    sos = signal.butter(4, highpass_hz, btype="highpass", fs=sr, output="sos")
+    chunk = max(HOP, int(chunk_s * sr) // HOP * HOP)
+    pad = int(OVERLAP_S * sr) // HOP * HOP
+    parts = []
+    for start in range(0, len(samples), chunk):
+        lo, hi = max(0, start - pad), min(len(samples), start + chunk + pad)
+        seg = signal.sosfiltfilt(sos, samples[lo:hi]).astype(np.float32)
+        env = librosa.onset.onset_strength(y=seg, sr=sr, hop_length=HOP)
+        first = (start - lo) // HOP
+        last = None if start + chunk >= len(samples) else first + chunk // HOP
+        parts.append(env[first:last])
+    return np.concatenate(parts)

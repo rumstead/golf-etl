@@ -78,3 +78,29 @@ def test_times_start_at_the_transient_and_subtract_the_lag():
     assert detect(y)[0].time_s == pytest.approx(5.0, abs=0.01)  # within a 120fps frame
     shifted = detect(y, lag_s=0.012)[0].time_s
     assert shifted == pytest.approx(detect(y)[0].time_s - 0.012)
+
+
+def test_long_session_stays_inside_a_memory_budget():
+    import tracemalloc
+
+    y = track(600)  # a 10 minute range session
+    clicks = [30.0 + 60.0 * i for i in range(10)]
+    for i, at in enumerate(clicks):
+        add_click(y, at, 0.8, seed=i + 10)
+    tracemalloc.start()
+    found = detect(y)
+    _, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert [o.time_s for o in found] == pytest.approx(clicks, abs=0.03)
+    assert peak < 600 * 1024**2
+
+
+def test_chunk_boundaries_do_not_move_or_drop_onsets():
+    y = track(40)
+    for i, at in enumerate((4.0, 13.0, 19.9, 31.0)):  # 19.9 sits just before a 10s boundary
+        add_click(y, at, 0.8 - 0.1 * i, seed=i + 20)
+    args = {"highpass_hz": 2000.0, "delta": 0.2, "min_gap_s": 5.0}
+    whole = find_onsets(y, SR, chunk_s=120.0, **args).kept
+    chunked = find_onsets(y, SR, chunk_s=10.0, **args).kept
+    assert [o.time_s for o in chunked] == pytest.approx([o.time_s for o in whole], abs=0.003)
+    assert [o.strength for o in chunked] == pytest.approx([o.strength for o in whole], abs=0.05)
