@@ -17,6 +17,7 @@ LEFTOVER_TTL = timedelta(days=1)
 @dataclass
 class SweepReport:
     deleted: list[str] = field(default_factory=list)
+    restored: list[str] = field(default_factory=list)
     bytes_after: int = 0
 
 
@@ -41,8 +42,21 @@ def sweep(drive: Drive, folders: Folders, cfg: Settings, now: datetime) -> Sweep
         key=lambda f: f.created,
     )
     gone: set[str] = set()
+    names = {s.name for s in sessions}
     for s in sessions:
-        leftover = s.name.startswith(".") and now - s.created > LEFTOVER_TTL
+        if s.name.startswith(".old-"):
+            # Left by a run that died mid-swap: drop it if the new session made it into
+            # place, otherwise it is still the only copy, so put it back.
+            sid = s.name.removeprefix(".old-")
+            if sid in names:
+                delete(s)
+                gone.add(s.id)
+            else:
+                drive.rename(s.id, sid)
+                names.add(sid)
+                report.restored.append(sid)
+            continue
+        leftover = s.name.startswith(".tmp-") and now - s.created > LEFTOVER_TTL
         if leftover or now - s.created > timedelta(days=cfg.session_ttl_days):
             delete(s)
             gone.add(s.id)

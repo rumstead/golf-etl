@@ -69,10 +69,24 @@ def test_failed_originals_expire_after_three_days(drive, folders):
 
 def test_leftover_temp_folders_are_cleaned_after_a_day(drive, folders, tmp_path):
     add_session(drive, folders, tmp_path, ".tmp-s1", 2 * DAY)
-    add_session(drive, folders, tmp_path, ".old-s2", 2 * DAY)
     add_session(drive, folders, tmp_path, ".tmp-s3", timedelta(hours=1))
     sweep(drive, folders, Settings(), drive.now)
     assert drive.names_in(folders.sessions) == [".tmp-s3"]
+
+
+def test_an_orphaned_old_session_is_restored(drive, folders, tmp_path):
+    add_session(drive, folders, tmp_path, ".old-s1", 2 * DAY)
+    report = sweep(drive, folders, Settings(), drive.now)
+    assert drive.names_in(folders.sessions) == ["s1"]
+    assert report.restored == ["s1"]
+    assert "golf/sessions/s1/swing-01/01-address.jpg" in drive.tree()
+
+
+def test_an_old_session_is_deleted_once_its_replacement_is_in_place(drive, folders, tmp_path):
+    add_session(drive, folders, tmp_path, ".old-s1", 2 * DAY)
+    add_session(drive, folders, tmp_path, "s1", timedelta(hours=1))
+    sweep(drive, folders, Settings(), drive.now)
+    assert drive.names_in(folders.sessions) == ["s1"]
 
 
 def test_size_cap_deletes_oldest_sessions_first(drive, folders, tmp_path):

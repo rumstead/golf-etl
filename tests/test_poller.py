@@ -235,3 +235,34 @@ def test_awkward_filenames_survive_the_round_trip(env):
     run()
     run()
     assert drive.names_in(folders.failed) == sorted([name, f"{name}.error.txt"])
+
+
+def test_crash_between_the_swap_renames_then_a_failed_upload_keeps_a_session(env, monkeypatch):
+    from golf_etl.drive.retention import sweep
+
+    drive, folders, process, run = env
+    drive.add_video("IMG_1.MOV", folders.inbox, b"same")
+    run()
+    sid = sessions(drive, folders)[0]
+    real_rename, real_upload = drive.rename, drive.upload
+
+    def die_after_moving_the_old_one(file_id, name):
+        if name == sid:
+            raise RuntimeError("killed")
+        real_rename(file_id, name)
+
+    monkeypatch.setattr(drive, "rename", die_after_moving_the_old_one)
+    drive.add_video("IMG_1.MOV", folders.inbox, b"same")
+    run()
+    assert f".old-{sid}" in sessions(drive, folders)
+    monkeypatch.setattr(drive, "rename", real_rename)
+
+    def die_uploading(src, parent_id, props):
+        raise RuntimeError("killed mid-upload")
+
+    monkeypatch.setattr(drive, "upload", die_uploading)
+    drive.add_video("IMG_1.MOV", folders.inbox, b"same")
+    run()
+    monkeypatch.setattr(drive, "upload", real_upload)
+    sweep(drive, folders, Settings(), drive.now + timedelta(days=2))
+    assert f"golf/sessions/{sid}/swing-01/01-address.jpg" in drive.tree()

@@ -115,7 +115,7 @@ class Poller:
         sid = result.session_id
         sessions = self.folders.sessions
         for stale in self.drive.list_children(sessions):
-            if stale.name in (f".tmp-{sid}", f".old-{sid}"):
+            if stale.name == f".tmp-{sid}":
                 self.drive.delete(stale.id)
         tmp = self.drive.create_folder(
             f".tmp-{sid}",
@@ -129,13 +129,15 @@ class Poller:
             },
         )
         self.upload_tree(result.session_dir, tmp, tmp)
+        # A leftover .old-<id> from a run that died mid-swap is the previous session too.
         existing = [
             f
             for f in self.drive.find_by_property(sessions, "sha256", checksum)
-            if f.id != tmp and not f.name.startswith(".")
+            if f.id != tmp and not f.name.startswith(".tmp-")
         ]
         for old in existing:
-            self.drive.rename(old.id, f".old-{sid}")
+            if not old.name.startswith(".old-"):
+                self.drive.rename(old.id, f".old-{sid}")
         self.drive.rename(tmp, sid)
         for old in existing:
             self.drive.delete(old.id)
