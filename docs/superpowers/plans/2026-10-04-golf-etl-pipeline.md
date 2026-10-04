@@ -15,7 +15,7 @@
 - Python 3.12 (`python:3.12-slim`). Runtime pins are exact in `requirements.txt`; dev pins in `requirements-dev.txt`.
 - Everything runs and is tested inside the image (`Dockerfile` `test` stage). The image needs `ffmpeg libgl1 libegl1 libgles2 libglib2.0-0`; MediaPipe fails to load without `libEGL`.
 - Pose model: `https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task` at `/opt/golf-etl/pose_landmarker_lite.task`.
-- Every JPEG is sRGB, quality 90, no EXIF, at most 2560px on the long edge and under 3.75MP, never upscaled.
+- Every JPEG is sRGB, quality 90, no EXIF, at most 2560px on the long edge and 3.7MP (`frame_max_pixels`), never upscaled.
 - Clip: impact minus 2.5s to plus 1.5s, 1080p long edge, H.264 CRF 23, AAC.
 - Detection defaults: high-pass 2000Hz, onset delta 0.2, min gap 8s, audio lag 12ms, pose window plus or minus 1.5s, confirm window 300ms, min hand speed 1.0 frame heights/s, short clip 15s.
 - Drive: root folder `golf` with `inbox/ processing/ failed/ sessions/`. Identity is `sha256Checksum`, falling back to `md5Checksum`. `appProperties` keys: `golfEtl`, `kind`, `sessionFolder`, `sha256`, `sourceName`, `pipelineVersion`, `attempts`. Deletes are permanent (`files.delete`), never trash.
@@ -56,12 +56,13 @@ golf-etl/
     audio.py               high-passed onsets, backtracked, lag-corrected, min-gap suppression
     pose.py                PoseTrack (hands speed/height) and PoseEstimator (MediaPipe)
     detect.py              confirm onsets with a hand speed peak; Detection/Swing/Rejected
-    frames.py              address/top/impact/finish picks; sharpest frame
-    render.py              fit, label, skeleton, 2x2 sheet, impact zoom band, JPEG save
-    session.py             session id and session.md
+    frames.py              address/top/impact/finish picks, 8-position sequence; sharpest frame
+    render.py              fit, label, skeleton, sequence grid, impact zoom band, JPEG save
+    session.py             session id and session.md (with the how-to-read guide)
     pipeline.py            detect_video, process_video, write_swing
     eval.py                score detections against labels
     cli.py                 process, eval, poll-drive, auth
+  claude/skills/golf-swing-analysis/SKILL.md   claude.ai coaching skill (uploaded by hand)
     drive/
       client.py            Drive protocol, DriveFile, Folders
       poller.py            Poller: recover, dedupe, claim, process, publish, retry
@@ -331,6 +332,7 @@ class Settings:
     still_speed: float = 0.15
     sharpness_radius: int = 2
     frame_long_edge: int = 2560
+    frame_max_pixels: int = 3_700_000  # Claude reads up to about 3.75MP
     jpeg_quality: int = 90
     clip_long_edge: int = 1920
     clip_crf: int = 23
@@ -1401,9 +1403,9 @@ git commit -s -m "feat: confirm swings with a hand speed peak"
 
 **Interfaces:**
 - Consumes: `PoseTrack` (Task 5).
-- Produces in `golf_etl.frames`: `Positions(address_s, top_s, impact_s, finish_s)` with `items() -> list[tuple[str, float]]` in that order, `pick_positions(track, impact_s, still_speed) -> Positions`, `sharpness(rgb) -> float`, `sharpest(frames) -> tuple[float, np.ndarray]`.
+- Produces in `golf_etl.frames`: `Positions(address_s, top_s, impact_s, finish_s)` with `items() -> list[tuple[str, float]]` (the four key positions, in order) and `sequence() -> list[tuple[str, float]]` (eight positions: address, takeaway, halfway back, top, transition, impact, follow-through, finish), `pick_positions(track, impact_s, still_speed) -> Positions`, `sharpness(rgb) -> float`, `sharpest(frames) -> tuple[float, np.ndarray]`.
 
-Finish is the highest hands after impact, not the first still moment: on the real clips the first still moment caught a pause in the follow-through.
+Finish is the highest hands after impact, not the first still moment: on the real clips the first still moment caught a pause in the follow-through. The four in-between sequence positions are spaced in time (thirds of address to top, halves of top to impact and impact to finish), which put transition at hands-at-shoulder on the way down on the real clips.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1443,6 +1445,25 @@ def test_sharpest_prefers_the_unblurred_frame():
     blurred = cv2.GaussianBlur(crisp, (9, 9), 4)
     t, img = sharpest([(1.0, blurred), (1.1, crisp), (1.2, blurred)])
     assert t == 1.1 and img is crisp
+
+
+def test_sequence_has_eight_positions_in_time_order():
+    p = pick_positions(swing_track(10.0), 10.0, still_speed=0.15)
+    seq = p.sequence()
+    assert [name for name, _ in seq] == [
+        "address",
+        "takeaway",
+        "halfway back",
+        "top",
+        "transition",
+        "impact",
+        "follow-through",
+        "finish",
+    ]
+    times = [t for _, t in seq]
+    assert times == sorted(times)
+    assert dict(seq)["transition"] == pytest.approx((p.top_s + p.impact_s) / 2)
+    assert dict(seq)["takeaway"] == pytest.approx(p.address_s + (p.top_s - p.address_s) / 3)
 ```
 
 - [ ] **Step 2: Run them and watch them fail**
@@ -1476,10 +1497,25 @@ class Positions:
     finish_s: float
 
     def items(self) -> list[tuple[str, float]]:
+        """The four key positions, saved as full frames."""
         return [
             ("address", self.address_s),
             ("top", self.top_s),
             ("impact", self.impact_s),
+            ("finish", self.finish_s),
+        ]
+
+    def sequence(self) -> list[tuple[str, float]]:
+        """Eight positions for the sequence sheet; the in-between ones are spaced in time."""
+        back = self.top_s - self.address_s
+        return [
+            ("address", self.address_s),
+            ("takeaway", self.address_s + back / 3),
+            ("halfway back", self.address_s + 2 * back / 3),
+            ("top", self.top_s),
+            ("transition", (self.top_s + self.impact_s) / 2),
+            ("impact", self.impact_s),
+            ("follow-through", (self.impact_s + self.finish_s) / 2),
             ("finish", self.finish_s),
         ]
 
@@ -1534,7 +1570,7 @@ def sharpest(frames: list[tuple[float, np.ndarray]]) -> tuple[float, np.ndarray]
 - [ ] **Step 4: Run the tests and the linters**
 
 Run: `t python -m pytest tests/test_frames.py -v && t ruff check src tests && t ruff format --check src tests`
-Expected: `4 passed`, `All checks passed!`, and no files to reformat
+Expected: `5 passed`, `All checks passed!`, and no files to reformat
 
 - [ ] **Step 5: Commit**
 
@@ -1543,7 +1579,7 @@ git add tests/test_frames.py src/golf_etl/frames.py
 git commit -s -m "feat: pick address, top, impact, and finish"
 ```
 
-### Task 8: Render labeled frames, the impact zoom band, and the pose sheet
+### Task 8: Render labeled frames, the impact zoom band, and the sequence sheet
 
 **Files:**
 - Test: `tests/test_render.py`
@@ -1551,9 +1587,9 @@ git commit -s -m "feat: pick address, top, impact, and finish"
 
 **Interfaces:**
 - Consumes: landmark arrays from `PoseTrack.nearest` (Task 5).
-- Produces in `golf_etl.render`: `fit(rgb, long_edge)`, `label(rgb, text)`, `draw_pose(rgb, landmarks)`, `grid_2x2(images, long_edge)`, `zoom_crop(rgb, landmarks)`, `save_jpeg(rgb, path, quality)`. All take and return RGB uint8 arrays; none modify their input.
+- Produces in `golf_etl.render`: `fit(rgb, long_edge, max_pixels=None)`, `label(rgb, text)`, `draw_pose(rgb, landmarks)`, `grid(images, labels, cols, long_edge, max_pixels)`, `zoom_crop(rgb, landmarks)`, `save_jpeg(rgb, path, quality)`. All take and return RGB uint8 arrays; none modify their input.
 
-The zoom is a band at ankle height across the frame because the ball is between the feet face-on but well past the toes down the line; an ankle-centered square missed the ball entirely on the real clips. `grid_2x2` fits the long edge because a width-fit portrait sheet came out 2560x4552.
+The zoom is a band at ankle height across the frame because the ball is between the feet face-on but well past the toes down the line; an ankle-centered square missed the ball entirely on the real clips. `grid` sizes the sheet to both the long edge and the pixel budget (eight portrait panels would otherwise be 5.8MP) and labels each panel after resizing so the text stays legible.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1561,6 +1597,7 @@ The zoom is a band at ankle height across the frame because the ball is between 
 
 ```python
 import numpy as np
+import pytest
 from PIL import Image
 
 from golf_etl import render
@@ -1575,6 +1612,11 @@ def test_fit_downscales_to_long_edge_and_never_upscales():
     assert render.fit(frame(), 2560).shape == (1440, 2560, 3)
     small = frame(720, 1280)
     assert render.fit(small, 2560) is small
+
+
+def test_fit_respects_the_pixel_budget():
+    h, w = render.fit(frame(1620, 2592), 2560, max_pixels=3_700_000).shape[:2]
+    assert max(h, w) <= 2560 and h * w <= 3_700_000
 
 
 def test_label_draws_without_touching_the_input():
@@ -1593,9 +1635,22 @@ def test_draw_pose_marks_pixels_and_skips_missing_pose():
     assert (render.draw_pose(frame(720, 1280), empty) == 90).all()
 
 
-def test_grid_fits_the_long_edge_for_landscape_and_portrait():
-    assert render.grid_2x2([frame(720, 1280)] * 4, 2560).shape == (1440, 2560, 3)
-    assert render.grid_2x2([frame(2560, 1440)] * 4, 2560).shape == (2560, 1440, 3)
+def test_grid_of_eight_portrait_frames_fits_claude():
+    sheet = render.grid([frame(1920, 1080)] * 8, [f"p{i}" for i in range(8)], 4, 2560, 3_700_000)
+    h, w = sheet.shape[:2]
+    assert max(h, w) <= 2560 and h * w <= 3_700_000
+    assert w / h == pytest.approx((4 * 1080) / (2 * 1920), rel=0.01)  # two rows of four
+
+
+def test_grid_of_eight_landscape_frames_fits_the_long_edge():
+    sheet = render.grid([frame(720, 1280)] * 8, ["x"] * 8, 4, 2560, 3_700_000)
+    assert sheet.shape == (720, 2560, 3)
+
+
+def test_grid_pads_a_short_last_row():
+    sheet = render.grid([frame(720, 1280)] * 3, ["a", "b", "c"], 2, 2560, 3_700_000)
+    h, w = sheet.shape[:2]
+    assert (sheet[h // 2 :, w // 2 :] == 0).all()
 
 
 def test_zoom_crop_is_a_native_band_at_ankle_height():
@@ -1661,12 +1716,16 @@ SKELETON = [
 ZOOM_BAND = 0.25  # impact zoom band height as a fraction of frame height
 
 
-def fit(rgb: np.ndarray, long_edge: int) -> np.ndarray:
+def fit(rgb: np.ndarray, long_edge: int, max_pixels: int | None = None) -> np.ndarray:
+    """Downscale to fit long_edge (and max_pixels when given). Never upscales."""
     h, w = rgb.shape[:2]
     scale = long_edge / max(h, w)
+    if max_pixels:
+        scale = min(scale, (max_pixels / (w * h)) ** 0.5)
     if scale >= 1:
         return rgb
-    return cv2.resize(rgb, (round(w * scale), round(h * scale)), interpolation=cv2.INTER_AREA)
+    size = (int(w * scale), int(h * scale))
+    return cv2.resize(rgb, size, interpolation=cv2.INTER_AREA)
 
 
 def label(rgb: np.ndarray, text: str) -> np.ndarray:
@@ -1705,13 +1764,20 @@ def draw_pose(rgb: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
     return out
 
 
-def grid_2x2(images: list[np.ndarray], long_edge: int) -> np.ndarray:
-    """2x2 sheet whose long edge is long_edge, for portrait and landscape frames alike."""
+def grid(
+    images: list[np.ndarray], labels: list[str], cols: int, long_edge: int, max_pixels: int
+) -> np.ndarray:
+    """Sheet in reading order, sized to fit long_edge and max_pixels, labeled after resizing."""
     h, w = images[0].shape[:2]
-    scale = long_edge / (2 * max(h, w))
-    cell = (round(w * scale), round(h * scale))
-    cells = [cv2.resize(img, cell, interpolation=cv2.INTER_AREA) for img in images]
-    return np.vstack([np.hstack(cells[0:2]), np.hstack(cells[2:4])])
+    rows = -(-len(images) // cols)
+    scale = min(long_edge / max(cols * w, rows * h), (max_pixels / (cols * w * rows * h)) ** 0.5)
+    cell_w, cell_h = int(w * scale), int(h * scale)
+    cells = [
+        label(cv2.resize(img, (cell_w, cell_h), interpolation=cv2.INTER_AREA), text)
+        for img, text in zip(images, labels, strict=True)
+    ]
+    cells += [np.zeros((cell_h, cell_w, 3), np.uint8)] * (rows * cols - len(cells))
+    return np.vstack([np.hstack(cells[r * cols : (r + 1) * cols]) for r in range(rows)])
 
 
 def zoom_crop(rgb: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
@@ -1741,13 +1807,13 @@ def save_jpeg(rgb: np.ndarray, path: Path, quality: int) -> None:
 - [ ] **Step 4: Run the tests and the linters**
 
 Run: `t python -m pytest tests/test_render.py -v && t ruff check src tests && t ruff format --check src tests`
-Expected: `7 passed`, `All checks passed!`, and no files to reformat
+Expected: `10 passed`, `All checks passed!`, and no files to reformat
 
 - [ ] **Step 5: Commit**
 
 ```bash
 git add tests/test_render.py src/golf_etl/render.py
-git commit -s -m "feat: render labeled frames, zoom band, and pose sheet"
+git commit -s -m "feat: render labeled frames, zoom band, and sequence sheet"
 ```
 
 ### Task 9: Process a video into a session folder
@@ -1760,8 +1826,8 @@ git commit -s -m "feat: render labeled frames, zoom band, and pose sheet"
 
 **Interfaces:**
 - Consumes: everything from Tasks 2 to 8.
-- Produces in `golf_etl.session`: `session_id(captured: datetime, checksum: str) -> str` (`YYYY-MM-DD-HHMM-<8 hex>`), `SessionSummary`, `write_session_md(path, summary)`.
-- Produces in `golf_etl.pipeline`: `SessionResult(session_id, session_dir, swings, rejected)`, `Detector = Callable[[Path, VideoInfo, Settings], Detection]`, `detect_video(video, info, cfg) -> Detection`, `process_video(video, out_root, cfg, *, source_name, checksum, uploaded_at, duplicates=None, version="dev", detect=detect_video) -> SessionResult`, `write_swing(video, info, swing, out, cfg)`. `process_video` raises on unreadable input; the poller relies on that.
+- Produces in `golf_etl.session`: `session_id(captured: datetime, checksum: str) -> str` (`YYYY-MM-DD-HHMM-<8 hex>`), `GUIDE` (the how-to-read section, written when there are swings), `SessionSummary`, `write_session_md(path, summary)`.
+- Produces in `golf_etl.pipeline`: `SessionResult(session_id, session_dir, swings, rejected)`, `Detector = Callable[[Path, VideoInfo, Settings], Detection]`, `detect_video(video, info, cfg) -> Detection`, `process_video(video, out_root, cfg, *, source_name, checksum, uploaded_at, duplicates=None, version="dev", detect=detect_video) -> SessionResult`, `write_swing(video, info, swing, out, cfg)` (writes `01`-`04` key frames, `05-impact-zoom.jpg`, `06-sequence.jpg`, `clip.mp4`). `process_video` raises on unreadable input; the poller relies on that.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1809,6 +1875,8 @@ def test_session_md_lists_swings_rejections_and_duplicates(tmp_path):
     assert "| swing-01 | 12.40s | 1.00 | +16ms |" in text
     assert "| 30.10s | 0.40 | hand speed peak +900ms from the sound |" in text
     assert "- IMG_1234 (1).MOV" in text
+    assert "## How to read this session" in text
+    assert "`06-sequence.jpg`" in text
 
 
 def test_session_md_with_no_swings_says_so(tmp_path):
@@ -1816,6 +1884,7 @@ def test_session_md_with_no_swings_says_so(tmp_path):
     write_session_md(path, summary())
     assert "No swings detected." in path.read_text()
     assert "Rejected" not in path.read_text()
+    assert "How to read" not in path.read_text()
 ```
 
 `tests/test_pipeline.py`:
@@ -1840,7 +1909,7 @@ EXPECTED = [
     "03-impact.jpg",
     "04-finish.jpg",
     "05-impact-zoom.jpg",
-    "06-pose-sheet.jpg",
+    "06-sequence.jpg",
     "clip.mp4",
 ]
 
@@ -1862,13 +1931,14 @@ def test_swing_folder_has_every_file_sized_for_claude(tmp_path):
     for name in EXPECTED[:-1]:
         with Image.open(swing / name) as img:
             assert max(img.size) <= 2560
+            assert img.size[0] * img.size[1] <= 3_700_000
             assert img.mode == "RGB"
     with Image.open(swing / "01-address.jpg") as img:
         assert img.size == (2560, 1440)
     with Image.open(swing / "05-impact-zoom.jpg") as img:
-        assert img.size == (2560, 1600)  # three 2592x540 native bands stacked, fit to 2560
-    with Image.open(swing / "06-pose-sheet.jpg") as img:
-        assert img.size == (2560, 1440)
+        assert img.size == (2433, 1520)  # three 2592x540 native bands, fit to the pixel budget
+    with Image.open(swing / "06-sequence.jpg") as img:
+        assert img.size == (2560, 720)  # two rows of four 640x360 cells
     assert result.swings == 1
 
 
@@ -1952,6 +2022,19 @@ from pathlib import Path
 
 from golf_etl.detect import Rejected, Swing
 
+GUIDE = """## How to read this session
+
+- Each `swing-NN/` folder is one swing, in the order hit.
+- Start with `06-sequence.jpg`: the whole swing in one image, read left to right, top row \
+then bottom row: address, takeaway, halfway back, top, transition, impact, follow-through, finish.
+- `05-impact-zoom.jpg` is the ball area at full resolution for the frames just before, at, \
+and after impact, top to bottom. Use it for contact, shaft lean, and strike.
+- `01-address.jpg` to `04-finish.jpg` are the key positions at full resolution for a closer look.
+- `clip.mp4` is the swing as video.
+- Every image has its position and its time in the video in the top-left corner.
+- The skeleton lines on the sequence sheet are a pose estimate; trust the photo over the lines.
+"""
+
 
 def session_id(captured: datetime, checksum: str) -> str:
     return f"{captured:%Y-%m-%d-%H%M}-{checksum[:8]}"
@@ -1981,6 +2064,7 @@ def write_session_md(path: Path, s: SessionSummary) -> None:
         "",
     ]
     if s.swings:
+        lines += [GUIDE]
         lines += ["| Swing | Impact | Strength | Hand speed peak |", "|---|---|---|---|"]
         for n, swing in enumerate(s.swings, 1):
             lines.append(
@@ -2096,46 +2180,45 @@ def write_swing(video: Path, info: VideoInfo, swing: Swing, out: Path, cfg: Sett
     out.mkdir(parents=True, exist_ok=True)
     positions = pick_positions(swing.track, swing.impact_s, cfg.still_speed)
     dt = 1 / info.fps
-    picked: list[tuple[str, float, np.ndarray]] = []
+    picked: dict[str, tuple[float, np.ndarray]] = {}
     impact_frames: list[np.ndarray] = []
-    for name, t in positions.items():
+    for name, t in positions.sequence():
         if name == "impact":
             window = list(read_frames(video, info, t - 1.5 * dt, t + 1.5 * dt))
             if not window:
                 raise RuntimeError(f"no frames decoded around impact at {t:.2f}s")
             i = int(np.argmin([abs(ft - t) for ft, _ in window]))
             impact_frames = [img for _, img in window[max(0, i - 1) : i + 2]]
-            ft, img = window[i]
+            picked[name] = window[i]
         else:
             r = cfg.sharpness_radius + 0.5
             window = list(read_frames(video, info, t - r * dt, t + r * dt))
             if not window:
                 raise RuntimeError(f"no frames decoded around {name} at {t:.2f}s")
-            ft, img = sharpest(window)
-        picked.append((name, ft, img))
+            picked[name] = sharpest(window)
 
-    for n, (name, ft, img) in enumerate(picked, 1):
-        frame = render.label(render.fit(img, cfg.frame_long_edge), f"{name} {ft:.2f}s")
-        render.save_jpeg(frame, out / f"{n:02d}-{name}.jpg", cfg.jpeg_quality)
+    for n, (name, _) in enumerate(positions.items(), 1):
+        ft, img = picked[name]
+        frame = render.fit(img, cfg.frame_long_edge, cfg.frame_max_pixels)
+        render.save_jpeg(
+            render.label(frame, f"{name} {ft:.2f}s"), out / f"{n:02d}-{name}.jpg", cfg.jpeg_quality
+        )
 
     address_pose = swing.track.nearest(positions.address_s)
     crops = [render.zoom_crop(img, address_pose) for img in impact_frames]
     names = ["impact -1", "impact", "impact +1"] if len(crops) == 3 else ["impact"] * len(crops)
     strip = np.vstack([render.label(c, n) for c, n in zip(crops, names, strict=True)])
-    render.save_jpeg(
-        render.fit(strip, cfg.frame_long_edge), out / "05-impact-zoom.jpg", cfg.jpeg_quality
-    )
+    zoom = render.fit(strip, cfg.frame_long_edge, cfg.frame_max_pixels)
+    render.save_jpeg(zoom, out / "05-impact-zoom.jpg", cfg.jpeg_quality)
 
-    overlays = [
-        render.label(
-            render.draw_pose(render.fit(img, cfg.frame_long_edge // 2), swing.track.nearest(ft)),
-            f"{name} {ft:.2f}s",
-        )
-        for name, ft, img in picked
-    ]
-    render.save_jpeg(
-        render.grid_2x2(overlays, cfg.frame_long_edge), out / "06-pose-sheet.jpg", cfg.jpeg_quality
-    )
+    overlays, labels = [], []
+    for name, _ in positions.sequence():
+        ft, img = picked[name]
+        small = render.fit(img, cfg.frame_long_edge // 2)
+        overlays.append(render.draw_pose(small, swing.track.nearest(ft)))
+        labels.append(f"{name} {ft:.2f}s")
+    sheet = render.grid(overlays, labels, 4, cfg.frame_long_edge, cfg.frame_max_pixels)
+    render.save_jpeg(sheet, out / "06-sequence.jpg", cfg.jpeg_quality)
 
     encode_clip(
         video,
@@ -2509,7 +2592,7 @@ if __name__ == "__main__":
 # golf-etl
 Break down golf swing videos into images for AI analysis.
 
-Share a swing video to the Google Drive folder `golf/inbox`. A few minutes later `golf/sessions/<session>/` has a folder per swing with labeled frames (address, top, impact, finish), an impact zoom, a pose sheet, and a short clip. Point a claude.ai chat at the session folder for coaching.
+Share a swing video to the Google Drive folder `golf/inbox`. A few minutes later `golf/sessions/<session>/` has a folder per swing with an eight-position sequence sheet, an impact zoom, full-resolution key frames (address, top, impact, finish), and a short clip. Ask claude.ai to review the session for coaching.
 
 How it works is in [docs/design.md](docs/design.md). It runs as a CronJob in [rumstead/homelab](https://github.com/rumstead/homelab) (`kubernetes/manifests/golf-etl`).
 
@@ -2517,6 +2600,13 @@ How it works is in [docs/design.md](docs/design.md). It runs as a CronJob in [ru
 - Phone on a tripod, whole body and the ball in frame, face-on or down the line.
 - Use slo-mo (120fps or more) in daylight. The faster shutter cuts blur, and at 120fps the impact zoom usually catches the club on the ball.
 - Sound on. Swings are found by the impact sound.
+
+## Coaching in claude.ai
+`claude/skills/golf-swing-analysis/` is the claude.ai skill that knows how to read a session: it finds the newest folder in `golf/sessions`, reads `session.md`, looks at each swing's sequence sheet and impact zoom, asks about ball flight once, and coaches. Zip the folder and upload it in claude.ai's skill settings (replacing an older copy), then ask:
+
+```
+review my latest golf session
+```
 
 ## Run it locally
 Everything runs in the container, which has ffmpeg and the pose model.
@@ -2573,7 +2663,7 @@ Expected: `2 passed`, and eval ends with `total: precision 1.00 recall 1.00 tp 2
 - [ ] **Step 6: Look at the frames**
 
 Run: `podman run --rm --user root -v "$PWD/local":/w:Z golf-etl process /w/IMG_4439-b.mov --out /w/out`
-Expected: `/w/out/2026-10-03-1240-bdd7988b: 1 swings, 0 rejected`. Open `local/out/2026-10-03-1240-bdd7988b/swing-01/`: natural color (not washed out), the pose sheet shows address, top, impact, and a high finish, and all three rows of `05-impact-zoom.jpg` show the clubface at the yellow ball. Delete `local/out/` afterwards.
+Expected: `/w/out/2026-10-03-1240-bdd7988b: 1 swings, 0 rejected`. Open `local/out/2026-10-03-1240-bdd7988b/swing-01/`: natural color (not washed out), `06-sequence.jpg` shows eight labeled positions in order ending in a high finish, and all three rows of `05-impact-zoom.jpg` show the clubface at the yellow ball. Delete `local/out/` afterwards.
 
 - [ ] **Step 7: Commit**
 
@@ -3893,10 +3983,255 @@ Expected: the log shows `published 2026-10-03-1240-19a836d2 with 1 swings`; `gol
 Upload `IMG_4439-a.mov` again and `IMG_4439-b.mov` once, then run the command.
 Expected: `golf/sessions/` holds exactly `2026-10-03-1240-19a836d2` (new folder, same name) and `2026-10-03-1240-bdd7988b`.
 
-- [ ] **Step 4: Coaching round trip**
-
-In claude.ai: `Look at my latest golf session in golf/sessions in my Google Drive and coach me.` Expected: the golf-swing-analysis skill reads the frames and asks about ball flight.
-
-- [ ] **Step 5: Hand off to homelab**
+- [ ] **Step 4: Hand off to homelab**
 
 Continue with rumstead/homelab#14 (`openspec/changes/add-golf-etl/tasks.md`): encrypt the credentials into `golf-etl-drive.sops.yaml`, add the manifests and Argo CD Application, then repeat Steps 2 and 3 with the CronJob doing the polling.
+
+
+---
+
+### Task 16: Teach the claude.ai skill to read sessions
+
+The owner's `golf-swing-analysis` skill only knew how to extract frames from an uploaded video. This adds a path for golf-etl sessions so "review my latest golf session" is all the owner has to type. Everything outside Step 1A and one line in Step 3 is the owner's existing skill, with its dashes replaced by colons and periods.
+
+**Files:**
+- Create: `claude/skills/golf-swing-analysis/SKILL.md`
+
+- [ ] **Step 1: Write the skill**
+
+`claude/skills/golf-swing-analysis/SKILL.md`:
+
+````markdown
+---
+name: golf-swing-analysis
+description: Analyze golf swings from uploaded videos or from golf-etl sessions in Google Drive. Use this skill whenever the user uploads a golf swing video (.mov, .mp4, or similar) and asks for coaching feedback, swing analysis, what they're doing wrong, how to improve, or any question about their golf swing mechanics. Also use it whenever the user asks to review a golf session, their latest or recent swings, today's range session, or a folder under golf/sessions in Google Drive, even if they don't say golf-etl. Also trigger when the user says they're at the range and wants swing feedback, or when they share multiple swing videos for comparison. Get the frames (from the session folder or by extracting them from the video), identify the camera angle, ask for ball flight context before diagnosing, and deliver structured coaching feedback with prioritized next steps.
+---
+
+# Golf Swing Analysis Skill
+
+A structured coaching workflow for analyzing golf swings from any camera angle, with calibrated confidence and prioritized feedback. Frames come either from a golf-etl session in Google Drive or from a video the user uploads.
+
+---
+
+## Core Principles (from real coaching sessions)
+
+1. **Camera angle first**: state what the angle allows and doesn't allow before diagnosing anything
+2. **Ball flight is ground truth**: ask for it before making path/face claims
+3. **One root cause, not a list**: most swing faults cascade from one problem; identify it
+4. **Compensations are not faults**: early extension, flipping, and chicken wing are usually symptoms, not causes
+5. **Calibrate confidence**: say "clearly visible", "likely", or "hard to confirm from this angle" on every call
+6. **Strengths first**: always lead with what's working before observations
+7. **One priority to fix**: give the golfer one thing to work on, not five
+
+---
+
+## Step 1: Get the Frames
+
+There are two sources. Use 1A when the user mentions a session, their latest or recent swings, or Google Drive. Use 1B when they upload a video.
+
+### 1A: From a golf-etl session in Google Drive
+
+golf-etl turns each uploaded range video into a session folder in Google Drive with frames already picked, labeled, and in order.
+
+1. **Find the session.** Search Google Drive for the folders under `golf/sessions`. Folder names start with the capture date and time (`YYYY-MM-DD-HHMM-<id>`), so the newest name is the latest session. Use the session the user names if they name one.
+2. **Read `session.md` first.** It lists the swings with their impact times, sounds that were rejected as not being a swing, and how to read the files.
+3. **Choose the swings.** All of them if there are 5 or fewer. Otherwise 5 spread across the session (the first, the last, and evenly in between) unless the user asks for specific swings or for all of them.
+4. **For each chosen swing, view `swing-NN/06-sequence.jpg` first.** It is the whole swing in one image, read left to right, top row then bottom row: address, takeaway, halfway back, top, transition, impact, follow-through, finish. Each panel is labeled with the position and its time in the video.
+5. **Then view `swing-NN/05-impact-zoom.jpg`.** It is the ball area at full resolution for the frames just before, at, and just after impact, top to bottom. Use it for contact, shaft lean, and strike location.
+6. **Open `01-address.jpg` to `04-finish.jpg` only when a call needs a closer look.**
+7. **Trust the photo over the skeleton.** The green lines are a pose estimate and can be wrong, especially for hands and arms crossing the body.
+8. **Look across swings.** Swings in one session are usually the same club and setup. Base the read on what repeats, and point at a single swing (by its folder name, like `swing-03`) only when it differs.
+
+Then continue with Step 2. Do not run ffmpeg for a session; the frames are already chosen.
+
+### 1B: From an uploaded video
+
+Use ffmpeg to extract frames at 8fps from each uploaded video. Scale to 960x540 for speed.
+
+```bash
+mkdir -p /home/claude/swing_frames/<video_id>
+ffmpeg -i <video_path> \
+  -vf "fps=8,scale=960:540" \
+  /home/claude/swing_frames/<video_id>/frame_%03d.jpg \
+  -y -loglevel quiet
+```
+
+Get total frame count and duration to know which frames to pull:
+```bash
+ffprobe -v quiet -show_entries format=duration -of default <video_path>
+```
+
+For each video, view these key positions (adjust frame numbers based on duration):
+- Address/setup: early frames
+- Takeaway: ~25% through
+- Mid-backswing: ~35%
+- Top of backswing: ~45-50%
+- Early downswing/transition: ~55%
+- Impact zone: ~65-70%
+- Follow-through: ~80%
+- Finish: final frames
+
+---
+
+## Step 2: Identify Camera Angle
+
+Before any diagnosis, determine the camera angle and state it explicitly:
+
+**True Face-On**: Camera pointing directly at the golfer's chest at address. Shows: weight transfer, hip thrust vs. rotation, shoulder tilt, lateral sway. Does NOT show: swing plane, club path, shaft lean at impact.
+
+**True Down-the-Line (DTL)**: Camera pointing directly down the target line from behind. Shows: swing plane, club path above/below plane, over-the-top, flat/steep. Does NOT show: lateral sway, weight transfer direction.
+
+**In-Between / Oblique**: Most range videos. State clearly: "This angle is between face-on and DTL. I can see [X] reliably but [Y] is harder to confirm. Ball flight will help verify."
+
+**High/Low**: Note if the camera is significantly above or below hip height, as this distorts plane readings.
+
+Do NOT make confident plane or path calls from a non-DTL angle. Do NOT make confident weight transfer calls from a non-face-on angle.
+
+---
+
+## Step 3: Ask for Context (Before Diagnosing)
+
+After identifying the angle, ask the golfer these questions before delivering full analysis. This is not optional: ball flight resolves ambiguity that camera angle cannot:
+
+```
+Before I give you the full read, a few quick questions:
+1. What club is this?
+2. What does the ball typically do: pull, slice, push, draw, something else?
+3. What have you already been told or are you already working on?
+```
+
+If the user is at the range and wants quick feedback, you can deliver a preliminary visual read while waiting for their answers, but clearly label it as "preliminary" and revisit after they answer.
+
+For a golf-etl session, ask once for the whole session, not once per swing.
+
+---
+
+## Step 4: Deliver Structured Analysis
+
+Structure the output as follows:
+
+### Camera Angle & Confidence
+State the angle and what it allows/limits in 2-3 sentences.
+
+### Strengths
+List 2-4 genuine positives. Look for:
+- Setup/posture quality
+- Weight transfer direction and completeness
+- Lower body sequencing
+- Shoulder turn
+- Finish position
+- Rhythm and tempo
+
+Do not invent positives. If something is genuinely neutral, leave it out.
+
+### Key Observations
+List the 1-3 most significant issues visible from this angle. For each:
+- State what you see ("the right shoulder fires toward the target at the start of the downswing")
+- State your confidence level ("clearly visible from this angle" / "likely but hard to confirm without DTL" / "ball flight suggests this")
+- Do NOT state a compensation as a primary fault
+
+**Common fault cascade to watch for (do not invert):**
+- Steep/outside-in path → early extension (hips thrust to move low point) → flip/scoop (hand release to close face)
+- The path is the cause. Early extension and flip are almost always downstream.
+- Over-the-top typically lives in the TRANSITION (right shoulder firing), not the backswing
+- Arm-dominated backswing is often overstated. Look for it but confirm before calling it
+
+### Root Cause
+Name the single most upstream fault causing the cascade. This is the one thing fixing everything else.
+
+### One Thing to Work On
+Give one drill or feel for the root cause. Not two. Not three. One.
+
+Format:
+- **The problem**: what's happening
+- **The drill**: specific, concrete, executable at the range
+- **The feel**: what it should feel like differently
+- **What gets better**: what downstream issues will improve as a result
+
+### What to Leave Alone
+Explicitly name 1-2 things the golfer should NOT tinker with. This prevents over-coaching and rabbit holes.
+
+---
+
+## Step 5: Handle Pushback
+
+If the golfer pushes back on a call:
+1. Go back to the specific frames immediately. Do not defend from memory
+2. Re-examine the relevant position with fresh eyes
+3. If they're right, correct clearly: "You're right. Looking again at [frame], [corrected read]. I'll pull back what I said about [X]."
+4. Update the root cause and priority if the correction changes the picture
+5. Never defend an incorrect call to preserve consistency
+
+---
+
+## Angle-Specific Limitations Reference
+
+| What You're Trying to Assess | Best Angle | Fallback |
+|------------------------------|-----------|---------|
+| Swing plane / club above or below plane | DTL | Ask about ball flight (slice = steep/over-top) |
+| Over-the-top move | DTL | Look for low finish, hands exiting left |
+| Early extension (hip thrust) | Face-on | DTL shows posture loss through impact |
+| Lateral sway on backswing | Face-on | Hard to confirm from DTL |
+| Weight transfer direction | Face-on | Look at trail foot at finish |
+| Shoulder tilt at address | Face-on | N/A |
+| Shaft lean at impact | DTL | N/A |
+| Grip | Either close-up | Ask player |
+
+---
+
+## Handicap Context
+
+Calibrate feedback to the player's level:
+
+**20+ handicap**: Path and contact are the priorities. Grip, posture, and pivot only if they're the direct root cause. Don't add swing thoughts; remove them.
+
+**10-20 handicap**: Path is usually solid or near-solid. Look at transition, shaft lean, and release pattern. One ball-striking variable at a time.
+
+**Under 10**: Precision matters. Plane, attack angle, face control, and sequencing timing. Subtle feels are appropriate.
+
+---
+
+## Red Flags (Things Often Misdiagnosed)
+
+- **Flip at impact** → almost always a compensation for steep path, not a standalone fault. Fix the path.
+- **Early extension** → almost always a compensation for steep path or loss of posture. Fix the root.
+- **Short/low finish** → symptom of outside-in path and/or deceleration, not a cause.
+- **Arm-dominated backswing** → often over-called. Confirm with good shoulder turn evidence before diagnosing.
+- **C-posture** → check carefully before calling. Camera angle and clothing can make good posture look rounded.
+- **Over-the-top** → the move happens in the transition (right shoulder), not necessarily because the takeaway is bad.
+
+---
+
+## Output Tone
+
+- Direct, practical, no fluff
+- One coach talking to one golfer, not a written report
+- No bullet point overload; use prose where it flows better
+- End with a clear "here's what to do at the range today" statement
+````
+
+- [ ] **Step 2: Check it**
+
+Run: `grep -cP '[\x{2013}\x{2014}]' claude/skills/golf-swing-analysis/SKILL.md; head -4 claude/skills/golf-swing-analysis/SKILL.md`
+Expected: `0`, then the frontmatter with `name: golf-swing-analysis` and the new description mentioning `golf/sessions`.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add claude/skills/golf-swing-analysis/SKILL.md
+git commit -s -m "feat: teach the swing analysis skill to read drive sessions"
+```
+
+- [ ] **Step 4: Package it for the owner**
+
+Run: `cd claude/skills && python3 -m zipfile -c "$HOME/golf-swing-analysis.zip" golf-swing-analysis/ && python3 -m zipfile -l "$HOME/golf-swing-analysis.zip"`
+Expected: the listing shows `golf-swing-analysis/SKILL.md` at the top level of the zip.
+
+- [ ] **Step 5: Owner uploads it in claude.ai**
+
+The owner replaces the existing `golf-swing-analysis` skill in claude.ai's skill settings with `~/golf-swing-analysis.zip`.
+
+- [ ] **Step 6: Coaching round trip**
+
+After Task 15 has put sessions in Drive, in a new claude.ai chat send only: `review my latest golf session`.
+Expected: Claude finds the newest folder in `golf/sessions`, reads `session.md`, views the swing's `06-sequence.jpg` and `05-impact-zoom.jpg`, states the camera angle, and asks the ball flight questions once before coaching.

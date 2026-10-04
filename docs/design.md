@@ -1,6 +1,6 @@
 # golf-etl design
 
-golf-etl turns phone videos of golf swings into per-swing frames that Claude can read. A video dropped into a Google Drive folder is picked up, each swing is found and sliced, and labeled frames land back in Drive. Coaching happens in claude.ai, where a chat is pointed at the session folder and the `golf-swing-analysis` skill does the analysis.
+golf-etl turns phone videos of golf swings into per-swing frames that Claude can read. A video dropped into a Google Drive folder is picked up, each swing is found and sliced, and labeled frames land back in Drive. Coaching happens in claude.ai: asking to review the latest session triggers the `golf-swing-analysis` skill (kept in this repo under `claude/skills/`), which finds the session in Drive and coaches from its frames.
 
 This repo owns the pipeline. The deployment (namespace, CronJob, SOPS secret, Argo CD Application) lives in [rumstead/homelab](https://github.com/rumstead/homelab) under the `add-golf-etl` OpenSpec change.
 
@@ -36,7 +36,7 @@ phone --share--> Drive golf/inbox/
        7. delete    original permanently deleted
        8. sweep     TTLs and size cap
                        |
-claude.ai: "look at my latest session in golf/sessions"
+claude.ai: "review my latest golf session" -> golf-swing-analysis skill
 ```
 
 ## Decisions
@@ -61,7 +61,7 @@ golf/
         03-impact.jpg
         04-finish.jpg
         05-impact-zoom.jpg
-        06-pose-sheet.jpg
+        06-sequence.jpg
 ```
 Non-video files in `inbox/` are left alone (strike photos will use them later).
 
@@ -98,11 +98,11 @@ All thresholds live in a config module with environment variable overrides (`GOL
   - Impact: frame nearest the corrected audio onset
   - Finish: highest hands from 0.3s after impact to the end of the clip window
   - For address, top, and finish, the sharpest frame (Laplacian variance) within plus or minus 2 frames of the target is used. Impact is never moved.
-- **Images**: JPEG quality 90, sRGB, metadata stripped, label and timestamp burned into a corner. Every image fits 2560px on the long edge and stays under 3.75MP.
+- **Images**: JPEG quality 90, sRGB, metadata stripped, label and timestamp burned into a corner. Every image fits 2560px on the long edge and 3.7MP (`GOLF_FRAME_MAX_PIXELS`).
   - `01` to `04`: full frame, 2560px long edge (never upscaled), no overlay
   - `05-impact-zoom.jpg`: a native-resolution band at ball height (centered on the ankles, a quarter of the frame tall, the frame width up to 1.2 frame heights) for impact minus 1, impact, and impact plus 1, stacked. The ball sits between the feet face-on but past the toes down the line, so the band covers both instead of guessing
-  - `06-pose-sheet.jpg`: 2x2 grid of the four positions with the pose skeleton drawn, fit to 2560px on the long edge
-- `session.md` lists source name, capture time, hash, pipeline version, each swing with its impact timestamp and confidence, rejected candidates, and removed duplicates.
+  - `06-sequence.jpg`: the whole swing in one image, two rows of four in reading order: address, takeaway, halfway back, top, transition, impact, follow-through, finish. Takeaway and halfway back sit at a third and two thirds of the time from address to top, transition halfway from top to impact, follow-through halfway from impact to finish. Each panel has the pose skeleton and a label drawn after resizing so it stays legible, and the sheet fits 2560px and 3.7MP
+- `session.md` lists source name, capture time, hash, pipeline version, each swing with its impact timestamp and confidence, rejected candidates, and removed duplicates. When there are swings it also carries a short "How to read this session" section naming each file, its order, and what it is good for, so any chat that reads it knows what to do without instructions.
 - Recording tip for the README: in daylight, 240fps slo-mo usually helps the impact frames more than 4K does because the faster shutter cuts blur. Both work.
 
 ### Drive storage
@@ -165,7 +165,7 @@ Swings are found by audio onsets confirmed by a wrist speed peak.
 
 ### Swing frames for Claude
 Each swing gets a clip and labeled JPEGs decoded from the original video, 2560px long edge or smaller and never upscaled.
-- **Detected swing**: the folder contains `clip.mp4` and `01-address.jpg` through `06-pose-sheet.jpg`, each JPEG sRGB and labeled with position and timestamp.
+- **Detected swing**: the folder contains `clip.mp4` and `01-address.jpg` through `06-sequence.jpg`, each JPEG sRGB and labeled with position and timestamp.
 - **Impact zoom**: `05-impact-zoom.jpg` shows a native-resolution band at ball height for the frames before, at, and after impact, with the ball in it from either camera angle.
 - **iPhone footage**: HDR, portrait, APAC-plus-AAC `.mov` files process like any other video, with natural color.
 - **Blurry target frame**: for address, top, and finish, a sharper frame within two frames is used instead.
@@ -180,6 +180,9 @@ Each swing gets a clip and labeled JPEGs decoded from the original video, 2560px
 - **Third failure**: the video moves to `golf/failed/` with `<name>.error.txt`.
 - **Run killed mid-video**: the next run moves it back to `golf/inbox` and counts the attempt.
 - **Re-upload of a failed video**: the failed copy and its error file are deleted and the new upload starts with a fresh attempt count.
+
+## Coaching skill
+`claude/skills/golf-swing-analysis/SKILL.md` is the owner's claude.ai skill with a second way in. It triggers on requests like "review my latest golf session", finds the newest folder in `golf/sessions` (names sort by capture time), reads `session.md`, picks up to 5 swings spread across the session unless told otherwise, views each swing's `06-sequence.jpg` and `05-impact-zoom.jpg`, opens the full key frames only when needed, asks about ball flight once per session, and then runs the existing coaching steps. It is uploaded to claude.ai by hand; claude.ai's copy is the one that runs.
 
 ## Risks / Trade-offs
 - claude.ai's Drive connector might not hand JPEGs to Claude as images → checked first with a test image, before any pipeline code. If it fails, the fallback is calling the Claude API from the pipeline.
