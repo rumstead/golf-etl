@@ -29,7 +29,7 @@ phone --share--> Drive golf/inbox/
      golf-etl poll-drive (every 3 minutes, never overlapping)
        1. recover   anything left in processing/ goes back to inbox/
        2. claim     move the video to processing/
-       3. detect    audio onsets, confirmed by a pose wrist speed peak
+       3. detect    audio onsets, confirmed by fast hands at the sound
        4. slice     impact -2.5s .. +1.5s, re-encoded
        5. frames    address / top / impact / finish, impact zoom, pose sheet
        6. publish   write sessions/.tmp-<id>/, swap into sessions/<id>/
@@ -84,7 +84,7 @@ None of these are errors. A copy uploaded while a run is processing the same vid
 1. ffmpeg extracts the first decodable audio track as 48kHz mono. iPhones put an APAC spatial audio track first that ffmpeg cannot decode, so it is skipped. librosa onset detection runs on a high-passed signal (about 2kHz) to suppress voices and wind, and each onset is backtracked from the envelope peak to where the transient starts.
 2. Onsets are moved earlier by `GOLF_IMPACT_AUDIO_LAG_MS` (default 12). The sound reaches the phone after contact and the phone adds its own audio/video offset; on the first two labeled clips the raw transient trailed the visible contact frame by 17 to 23ms.
 3. Candidates closer than 8s to a stronger candidate are dropped. Dropped ones with strength 0.5 or more are listed in `session.md` as rejected so a missed swing is visible.
-4. MediaPipe Pose Landmarker (lite) runs on the clip window around each candidate (impact minus 2.5s to plus 1.5s) at 640px and at most 60fps, never on the whole video. The largest person in frame is the golfer. A candidate is confirmed when the hands (midpoint of both wrists, which works for either handedness) peak in speed within 300ms of the onset, looking at plus or minus 1.5s. Unconfirmed candidates are recorded in `session.md` as rejected with the reason.
+4. MediaPipe Pose Landmarker (lite) runs on the clip window around each candidate (impact minus 2.5s to plus 1.5s) at 640px and at most 60fps, never on the whole video. The largest person in frame is the golfer. A candidate is confirmed when the hands (midpoint of both wrists, which works for either handedness) move at least 1.0 frame heights per second within 300ms of the onset. Where the hands are fastest overall does not matter: in a 12 minute simulator session, 10 of 21 swings had their fastest hands in the follow-through, 400 to 1300ms after impact. Sounds made while the hands are slow (a club soled or tapped at address) are rejected. Unconfirmed candidates are recorded in `session.md` as rejected with the reason.
 5. Videos under 15s keep only the single strongest confirmed candidate.
 6. Zero confirmed swings is not a failure. The session is written with `session.md` only.
 
@@ -157,7 +157,7 @@ A video is identified by its Drive checksum, not its filename. One video maps to
 - **Crash while replacing a session**: the previous session folder stays intact and readable.
 
 ### Swing detection
-Swings are found by audio onsets confirmed by a wrist speed peak.
+Swings are found by audio onsets confirmed by fast hands at the sound.
 - **Range session with neighboring bays**: each of the owner's swings is emitted separately, and unconfirmed onsets are listed in `session.md` as rejected with timestamps.
 - **Impact timing**: the impact frame is within two frames of the first frame showing the clubface on the ball, on 120fps footage.
 - **Single-swing clip**: a video under 15 seconds emits at most one swing.

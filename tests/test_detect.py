@@ -1,9 +1,10 @@
+import numpy as np
 import pytest
 
 from golf_etl.audio import Onset
 from golf_etl.config import Settings
 from golf_etl.detect import confirm, detect_swings
-from tests.poses import empty_track, still_track, swing_track
+from tests.poses import empty_track, fast_finish_track, still_track, swing_track
 
 CFG = Settings()
 
@@ -14,11 +15,20 @@ def test_confirms_swing_with_peak_at_the_sound():
     assert abs(offset) <= CFG.confirm_window_ms
 
 
-def test_rejects_when_peak_is_far_from_the_sound():
-    # neighbor's impact 1s before the user's own downswing
+def test_rejects_a_sound_while_the_hands_are_slow():
+    # a club tap or a neighbor's impact 1s before the golfer's own downswing
     offset, reason = confirm(swing_track(11.0), 10.0, CFG)
     assert offset is None
-    assert "from the sound" in reason
+    assert reason.startswith("hands too slow")
+
+
+def test_confirms_when_the_follow_through_is_faster_than_impact():
+    track = fast_finish_track(10.0)
+    speed = track.hand_speed()
+    assert track.times[int(np.nanargmax(speed))] > 10.5  # the fastest moment is the finish
+    offset, reason = confirm(track, 10.0, CFG)
+    assert reason == ""
+    assert abs(offset) <= CFG.confirm_window_ms
 
 
 def test_rejects_still_person_and_no_pose():

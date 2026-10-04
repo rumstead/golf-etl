@@ -69,7 +69,8 @@ def run(
     total, lines = Score(), []
     for entry in labels["videos"]:
         video = (labels_path.parent / entry["path"]).resolve()
-        s = score(detect_times(video, cfg), [float(t) for t in entry["impacts"]], tolerance_s)
+        tolerance = entry.get("tolerance_ms", tolerance_s * 1000) / 1000
+        s = score(detect_times(video, cfg), [float(t) for t in entry["impacts"]], tolerance)
         total.add(s)
         lines.append(s.line(entry["path"]))
     lines.append(total.line("total"))

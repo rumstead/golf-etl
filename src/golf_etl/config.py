@@ -13,7 +13,6 @@ class Settings:
     onset_delta: float = 0.2
     onset_min_gap_s: float = 8.0
     impact_audio_lag_ms: float = 12.0
-    pose_window_s: float = 1.5
     confirm_window_ms: int = 300
     confirm_min_speed: float = 1.0
     short_clip_s: float = 15.0

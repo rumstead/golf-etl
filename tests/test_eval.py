@@ -41,3 +41,14 @@ def test_run_reads_labels_relative_to_the_file(tmp_path):
     assert seen == [tmp_path / "a.mov"]
     assert (total.true_pos, total.false_neg) == (1, 1)
     assert lines[-1].startswith("total: precision 1.00 recall 0.50")
+
+
+def test_a_video_can_override_the_tolerance(tmp_path):
+    (tmp_path / "labels.yaml").write_text(
+        "tolerance_ms: 17\n"
+        "videos:\n"
+        "  - path: exact.mov\n    impacts: [5.0]\n"
+        "  - path: rough.mov\n    tolerance_ms: 100\n    impacts: [5.0]\n"
+    )
+    total, _ = run(tmp_path / "labels.yaml", Settings(), lambda video, cfg: [5.05])
+    assert (total.true_pos, total.false_neg) == (1, 1)  # only rough.mov allows 50ms

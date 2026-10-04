@@ -48,3 +48,15 @@ def still_track(center_s: float, fps: float = 60.0, span: float = 4.0) -> PoseTr
 def empty_track(center_s: float, fps: float = 60.0) -> PoseTrack:
     times = np.arange(center_s - 2, center_s + 2, 1 / fps)
     return PoseTrack(times, np.full((len(times), NUM_LANDMARKS, 3), np.nan), aspect=16 / 9)
+
+
+def fast_finish_track(impact_s: float, fps: float = 60.0) -> PoseTrack:
+    """A swing whose hands move faster in the follow-through than at impact, as some camera
+    angles see it."""
+    track = swing_track(impact_s, fps=fps)
+    rel = track.times - impact_s
+    swoop = (rel > 0.6) & (rel < 0.9)
+    dip = 0.5 * np.sin(np.pi * (rel[swoop] - 0.6) / 0.3)
+    track.landmarks[swoop, LEFT_WRIST, 1] -= dip
+    track.landmarks[swoop, RIGHT_WRIST, 1] -= dip
+    return track

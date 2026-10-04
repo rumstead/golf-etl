@@ -35,19 +35,21 @@ class Detection:
 
 
 def confirm(track: PoseTrack, onset_s: float, cfg: Settings) -> tuple[float | None, str]:
-    """(peak offset in ms, "") when the swing is confirmed, else (None, reason)."""
-    near = np.abs(track.times - onset_s) <= cfg.pose_window_s
+    """(offset in ms of the fastest hands near the sound, "") when confirmed, else (None, reason).
+
+    A swing is confirmed when the hands are moving fast within confirm_window_ms of the sound.
+    Where the hands are fastest overall does not matter: some camera angles see the
+    follow-through faster than impact.
+    """
+    near = np.abs(track.times - onset_s) <= cfg.confirm_window_ms / 1000
     speed = track.hand_speed()[near]
     if speed.size == 0 or np.all(np.isnan(speed)):
         return None, "no pose found"
     i = int(np.nanargmax(speed))
     peak_speed = float(speed[i])
-    offset_ms = (float(track.times[near][i]) - onset_s) * 1000
     if peak_speed < cfg.confirm_min_speed:
         return None, f"hands too slow ({peak_speed:.2f} frame heights/s)"
-    if abs(offset_ms) > cfg.confirm_window_ms:
-        return None, f"hand speed peak {offset_ms:+.0f}ms from the sound"
-    return offset_ms, ""
+    return (float(track.times[near][i]) - onset_s) * 1000, ""
 
 
 def detect_swings(
