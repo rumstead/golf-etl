@@ -62,6 +62,7 @@ golf/
         04-finish.jpg
         05-impact-zoom.jpg
         06-sequence.jpg
+        07-after-shot.jpg
 ```
 Non-video files in `inbox/` are left alone (strike photos will use them later).
 
@@ -102,6 +103,7 @@ All thresholds live in a config module with environment variable overrides (`GOL
   - `01` to `04`: full frame, 2560px long edge (never upscaled), no overlay
   - `05-impact-zoom.jpg`: a native-resolution band at ball height (centered on the ankles, a quarter of the frame tall, the frame width up to 1.2 frame heights) for impact minus 1, impact, and impact plus 1, stacked. The ball sits between the feet face-on but past the toes down the line, so the band covers both instead of guessing
   - `06-sequence.jpg`: the whole swing in one image, two rows of four in reading order: address, takeaway, halfway back, top, transition, impact, follow-through, finish. Takeaway and halfway back sit at a third and two thirds of the time from address to top, transition halfway from top to impact, follow-through halfway from impact to finish. Each panel has the pose skeleton and a label drawn after resizing so it stays legible, and the sheet fits 2560px and 3.7MP
+- `07-after-shot.jpg`: one full-resolution frame `GOLF_AFTER_SHOT_S` (default 8s) after impact, pulled earlier when the next swing's clip window starts sooner and kept inside the video. On a simulator the screen shows the previous shot until about 2s after impact and this shot's final numbers (carry, total) by about 8s, so this is the only frame whose numbers belong to the swing. On the range it is just the golfer after the shot.
 - `session.md` lists source name, capture time, hash, pipeline version, each swing with its impact timestamp and confidence, rejected candidates, and removed duplicates. When there are swings it also carries a short "How to read this session" section naming each file, its order, and what it is good for, so any chat that reads it knows what to do without instructions.
 - Recording tip for the README: in daylight, 240fps slo-mo usually helps the impact frames more than 4K does because the faster shutter cuts blur. Both work.
 
@@ -182,7 +184,7 @@ Each swing gets a clip and labeled JPEGs decoded from the original video, 2560px
 - **Re-upload of a failed video**: the failed copy and its error file are deleted and the new upload starts with a fresh attempt count.
 
 ## Coaching skill
-`claude/skills/golf-swing-analysis/SKILL.md` is the owner's claude.ai skill with a second way in. It triggers on requests like "review my latest golf session", finds the newest folder in `golf/sessions` (names sort by capture time), reads `session.md`, picks up to 5 swings spread across the session unless told otherwise, views each swing's `06-sequence.jpg` and `05-impact-zoom.jpg`, opens the full key frames only when needed, asks about ball flight once per session, and then runs the existing coaching steps. It is uploaded to claude.ai by hand; claude.ai's copy is the one that runs.
+`claude/skills/golf-swing-analysis/SKILL.md` is the owner's claude.ai skill with a second way in. It triggers on requests like "review my latest golf session", finds the newest folder in `golf/sessions` (names sort by capture time), reads `session.md`, picks up to 5 swings spread across the session unless told otherwise, views each swing's `06-sequence.jpg` and `05-impact-zoom.jpg`, reads simulator or launch monitor numbers from `07-after-shot.jpg` when a screen is in view (and never from earlier frames, which show the previous shot), opens the full key frames only when needed, asks about ball flight once per session when there are no numbers, and then runs the existing coaching steps. It is uploaded to claude.ai by hand; claude.ai's copy is the one that runs.
 
 ## Risks / Trade-offs
 - claude.ai's Drive connector might not hand JPEGs to Claude as images → checked first with a test image, before any pipeline code. If it fails, the fallback is calling the Claude API from the pipeline.

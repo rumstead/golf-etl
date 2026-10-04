@@ -22,6 +22,7 @@ class Settings:
     # slicing and frames
     pre_impact_s: float = 2.5
     post_impact_s: float = 1.5
+    after_shot_s: float = 8.0  # simulators show the shot's final numbers by about 8s
     still_speed: float = 0.15
     sharpness_radius: int = 2
     frame_long_edge: int = 2560

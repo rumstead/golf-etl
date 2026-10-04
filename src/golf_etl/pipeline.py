@@ -11,7 +11,7 @@ from golf_etl import render
 from golf_etl.audio import SAMPLE_RATE, Onsets, find_onsets
 from golf_etl.config import Settings
 from golf_etl.detect import Detection, Rejected, Swing, detect_swings
-from golf_etl.frames import pick_positions, sharpest
+from golf_etl.frames import after_shot_time, pick_positions, sharpest
 from golf_etl.media import VideoInfo, encode_clip, probe, read_audio, read_frames
 from golf_etl.pose import PoseEstimator
 from golf_etl.session import SessionSummary, session_id, write_session_md
@@ -72,8 +72,10 @@ def process_video(
     sid = session_id(info.creation_time or uploaded_at, checksum)
     session_dir = out_root / sid
     session_dir.mkdir(parents=True, exist_ok=True)
+    impacts = [s.impact_s for s in detection.swings]
     for n, swing in enumerate(detection.swings, 1):
-        write_swing(video, info, swing, session_dir / f"swing-{n:02d}", cfg)
+        next_impact = impacts[n] if n < len(impacts) else None
+        write_swing(video, info, swing, session_dir / f"swing-{n:02d}", cfg, next_impact)
     write_session_md(
         session_dir / "session.md",
         SessionSummary(
@@ -90,7 +92,14 @@ def process_video(
     return SessionResult(sid, session_dir, len(detection.swings), detection.rejected)
 
 
-def write_swing(video: Path, info: VideoInfo, swing: Swing, out: Path, cfg: Settings) -> None:
+def write_swing(
+    video: Path,
+    info: VideoInfo,
+    swing: Swing,
+    out: Path,
+    cfg: Settings,
+    next_impact_s: float | None = None,
+) -> None:
     out.mkdir(parents=True, exist_ok=True)
     positions = pick_positions(swing.track, swing.impact_s, cfg.still_speed)
     dt = 1 / info.fps
@@ -133,6 +142,20 @@ def write_swing(video: Path, info: VideoInfo, swing: Swing, out: Path, cfg: Sett
         labels.append(f"{name} {ft:.2f}s")
     sheet = render.grid(overlays, labels, 4, cfg.frame_long_edge, cfg.frame_max_pixels)
     render.save_jpeg(sheet, out / "06-sequence.jpg", cfg.jpeg_quality)
+
+    # On a simulator or launch monitor the screen shows this shot's numbers only seconds
+    # after impact; every earlier frame shows the previous shot's.
+    after = after_shot_time(
+        swing.impact_s, cfg.after_shot_s, info.duration_s, next_impact_s, cfg.pre_impact_s
+    )
+    window = list(read_frames(video, info, after, after + 1.5 * dt))
+    if not window:
+        raise RuntimeError(f"no frames decoded for the after-shot frame at {after:.2f}s")
+    ft, img = window[0]
+    frame = render.fit(img, cfg.frame_long_edge, cfg.frame_max_pixels)
+    render.save_jpeg(
+        render.label(frame, f"after shot {ft:.2f}s"), out / "07-after-shot.jpg", cfg.jpeg_quality
+    )
 
     encode_clip(
         video,

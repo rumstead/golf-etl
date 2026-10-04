@@ -2,7 +2,7 @@ import cv2
 import numpy as np
 import pytest
 
-from golf_etl.frames import pick_positions, sharpest
+from golf_etl.frames import after_shot_time, pick_positions, sharpest
 from tests.poses import swing_track
 
 
@@ -50,3 +50,20 @@ def test_sequence_has_eight_positions_in_time_order():
     assert times == sorted(times)
     assert dict(seq)["transition"] == pytest.approx((p.top_s + p.impact_s) / 2)
     assert dict(seq)["takeaway"] == pytest.approx(p.address_s + (p.top_s - p.address_s) / 3)
+
+
+def test_after_shot_time_defaults_to_the_delay():
+    assert after_shot_time(10.0, 8.0, duration_s=600.0) == pytest.approx(18.0)
+
+
+def test_after_shot_time_stops_before_the_next_swing_starts():
+    # next impact at 20s; its clip window starts 2.5s earlier
+    assert after_shot_time(10.0, 8.0, 600.0, next_impact_s=20.0, pre_impact_s=2.5) == 17.5
+
+
+def test_after_shot_time_stays_inside_the_video():
+    assert after_shot_time(10.0, 8.0, duration_s=12.0) == pytest.approx(11.95)
+
+
+def test_after_shot_time_is_never_before_impact():
+    assert after_shot_time(10.0, 8.0, duration_s=10.02) == 10.0

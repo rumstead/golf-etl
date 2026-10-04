@@ -18,6 +18,7 @@ EXPECTED = [
     "04-finish.jpg",
     "05-impact-zoom.jpg",
     "06-sequence.jpg",
+    "07-after-shot.jpg",
     "clip.mp4",
 ]
 

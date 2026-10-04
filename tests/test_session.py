@@ -41,6 +41,7 @@ def test_session_md_lists_swings_rejections_and_duplicates(tmp_path):
     assert "- IMG_1234 (1).MOV" in text
     assert "## How to read this session" in text
     assert "`06-sequence.jpg`" in text
+    assert "`07-after-shot.jpg`" in text
 
 
 def test_session_md_with_no_swings_says_so(tmp_path):

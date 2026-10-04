@@ -14,6 +14,9 @@ then bottom row: address, takeaway, halfway back, top, transition, impact, follo
 - `05-impact-zoom.jpg` is the ball area at full resolution for the frames just before, at, \
 and after impact, top to bottom. Use it for contact, shaft lean, and strike.
 - `01-address.jpg` to `04-finish.jpg` are the key positions at full resolution for a closer look.
+- `07-after-shot.jpg` is a full-resolution frame a few seconds after impact. On a simulator \
+or launch monitor its screen shows this shot's numbers (club path, face, speeds, spin, carry). \
+Numbers visible in any other frame belong to the previous shot.
 - `clip.mp4` is the swing as video.
 - Every image has its position and its time in the video in the top-left corner.
 - The skeleton lines on the sequence sheet are a pose estimate; trust the photo over the lines.

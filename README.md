@@ -1,7 +1,7 @@
 # golf-etl
 Break down golf swing videos into images for AI analysis.
 
-Share a swing video to the Google Drive folder `golf/inbox`. A few minutes later `golf/sessions/<session>/` has a folder per swing with an eight-position sequence sheet, an impact zoom, full-resolution key frames (address, top, impact, finish), and a short clip. Ask claude.ai to review the session for coaching.
+Share a swing video to the Google Drive folder `golf/inbox`. A few minutes later `golf/sessions/<session>/` has a folder per swing with an eight-position sequence sheet, an impact zoom, full-resolution key frames (address, top, impact, finish), a frame a few seconds after impact that catches simulator or launch monitor numbers, and a short clip. Ask claude.ai to review the session for coaching.
 
 How it works is in [docs/design.md](docs/design.md). It runs as a CronJob in [rumstead/homelab](https://github.com/rumstead/homelab) (`kubernetes/manifests/golf-etl`).
 

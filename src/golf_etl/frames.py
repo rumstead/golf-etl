@@ -87,3 +87,19 @@ def sharpness(rgb: np.ndarray) -> float:
 
 def sharpest(frames: list[tuple[float, np.ndarray]]) -> tuple[float, np.ndarray]:
     return max(frames, key=lambda f: sharpness(f[1]))
+
+
+def after_shot_time(
+    impact_s: float,
+    delay_s: float,
+    duration_s: float,
+    next_impact_s: float | None = None,
+    pre_impact_s: float = 2.5,
+) -> float:
+    """When to grab the after-shot frame: delay_s after impact, but before the next swing's
+    clip window starts and inside the video."""
+    t = impact_s + delay_s
+    if next_impact_s is not None:
+        t = min(t, next_impact_s - pre_impact_s)
+    t = min(t, duration_s - 0.05)
+    return max(t, impact_s)

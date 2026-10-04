@@ -34,9 +34,10 @@ golf-etl turns each uploaded range video into a session folder in Google Drive w
 3. **Choose the swings.** All of them if there are 5 or fewer. Otherwise 5 spread across the session (the first, the last, and evenly in between) unless the user asks for specific swings or for all of them.
 4. **For each chosen swing, view `swing-NN/06-sequence.jpg` first.** It is the whole swing in one image, read left to right, top row then bottom row: address, takeaway, halfway back, top, transition, impact, follow-through, finish. Each panel is labeled with the position and its time in the video.
 5. **Then view `swing-NN/05-impact-zoom.jpg`.** It is the ball area at full resolution for the frames just before, at, and just after impact, top to bottom. Use it for contact, shaft lean, and strike location.
-6. **Open `01-address.jpg` to `04-finish.jpg` only when a call needs a closer look.**
-7. **Trust the photo over the skeleton.** The green lines are a pose estimate and can be wrong, especially for hands and arms crossing the body.
-8. **Look across swings.** Swings in one session are usually the same club and setup. Base the read on what repeats, and point at a single swing (by its folder name, like `swing-03`) only when it differs.
+6. **If there is a simulator or launch monitor screen, read `swing-NN/07-after-shot.jpg`.** It is taken a few seconds after impact, when the screen shows this shot's numbers. Read what is clearly legible: club path, face to path, face to target, club speed, ball speed, smash factor, launch (VLA/HLA), spin (back, side, total), carry, offline, peak height. Only report digits you can actually read; if part of the panel is hidden behind the golfer or blurred, say which numbers you could not read rather than guessing. **Never read numbers from the address, impact, or sequence frames: the screen still shows the previous shot there.**
+7. **Open `01-address.jpg` to `04-finish.jpg` only when a call needs a closer look.**
+8. **Trust the photo over the skeleton.** The green lines are a pose estimate and can be wrong, especially for hands and arms crossing the body.
+9. **Look across swings.** Swings in one session are usually the same club and setup. Base the read on what repeats, and point at a single swing (by its folder name, like `swing-03`) only when it differs.
 
 Then continue with Step 2. Do not run ffmpeg for a session; the frames are already chosen.
 
@@ -99,6 +100,8 @@ Before I give you the full read, a few quick questions:
 If the user is at the range and wants quick feedback, you can deliver a preliminary visual read while waiting for their answers, but clearly label it as "preliminary" and revisit after they answer.
 
 For a golf-etl session, ask once for the whole session, not once per swing.
+
+When `07-after-shot.jpg` shows simulator or launch monitor numbers, those numbers are the ball flight: use club path, face to path, and face to target to settle path and face questions (for example, a positive club path with a closed face to path is a draw or hook pattern) and do not ask the golfer to describe ball flight for those swings. Still ask which club and what they are working on. Tie every diagnosis back to both the frames and the numbers, and say when they disagree.
 
 ---
 
