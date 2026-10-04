@@ -18,7 +18,7 @@ Claude reads images up to 2576px on the long edge (about 3.75MP) on current mode
   - Never process the same video into two sessions, and reprocess by re-uploading
   - Keep Drive usage bounded on a personal Gmail quota
 - Non-Goals:
-  - Strike location on the clubface from video. At 45 m/s the clubhead moves about 75cm between frames at 60fps and about 19cm at 240fps, so the contact frame almost never exists. Impact tape or foot spray photos are a follow-up
+  - Judging strike location on the clubface. At 120fps slo-mo the contact frame shows up in the impact zoom for wedge-speed swings, but at full driver speed the clubhead still moves about 19cm between frames at 240fps, so it is not guaranteed. Impact tape or foot spray photos are a follow-up
   - Calling the Claude API, notifications, an MCP server
   - Real-time feedback
 
@@ -68,7 +68,7 @@ Non-video files in `inbox/` are left alone (strike photos will use them later).
 ### Identity and idempotency
 - **Identity is the Drive `sha256Checksum`**, falling back to `md5Checksum`. Drive computes both on upload, so no download is needed, and filenames like `IMG_1234.MOV` repeat across days. A file with neither checksum yet is skipped until the next poll.
 - **Session ID** is `<capture time YYYY-MM-DD-HHMM>-<first 8 hex of the hash>`. Capture time comes from the video's `creation_time` (ffprobe), falling back to Drive `createdTime`. The session folder carries `appProperties` `{sha256, sourceName, pipelineVersion}` and is found with an `appProperties has {key='sha256' and value='...'}` query.
-- **Claiming**: a video is moved from `inbox/` to `processing/` before any work. Runs never overlap and a failed run is not restarted in place (see Runtime contract), so anything in `processing/` when a run starts belongs to a dead run. It is moved back to `inbox/` with `appProperties.attempts` incremented.
+- **Claiming**: a video is moved from `inbox/` to `processing/` before any work. Runs never overlap and a failed run is not restarted in place (see Runtime contract), so anything in `processing/` when a run starts belongs to a dead run. It is moved back to `inbox/` with `appProperties.attempts` incremented and retried in the same run.
 - **Atomic replace**: output is written to `sessions/.tmp-<session-id>/`. On success any existing `sessions/<session-id>/` is permanently deleted and the temp folder is renamed into place.
 
 | Case | Behavior |
@@ -81,25 +81,27 @@ Non-video files in `inbox/` are left alone (strike photos will use them later).
 None of these are errors. A copy uploaded while a run is processing the same video is picked up by the next run as a re-upload.
 
 ### Swing detection
-1. ffmpeg extracts audio as 22.05kHz mono. librosa onset detection runs on a high-passed signal (about 2kHz) to suppress voices and wind. Candidates closer than 8s to a stronger candidate are dropped.
-2. MediaPipe Pose Landmarker (lite) runs only on a window of plus or minus 1.5s around each candidate, not on the whole video. A candidate is confirmed when lead wrist speed peaks within 300ms of the onset. Unconfirmed candidates are recorded in `session.md` as rejected with their timestamps.
-3. Videos under 15s keep only the single strongest confirmed candidate.
-4. Zero confirmed swings is not a failure. The session is written with `session.md` only.
+1. ffmpeg extracts the first decodable audio track as 48kHz mono. iPhones put an APAC spatial audio track first that ffmpeg cannot decode, so it is skipped. librosa onset detection runs on a high-passed signal (about 2kHz) to suppress voices and wind, and each onset is backtracked from the envelope peak to where the transient starts.
+2. Onsets are moved earlier by `GOLF_IMPACT_AUDIO_LAG_MS` (default 12). The sound reaches the phone after contact and the phone adds its own audio/video offset; on the first two labeled clips the raw transient trailed the visible contact frame by 17 to 23ms.
+3. Candidates closer than 8s to a stronger candidate are dropped. Dropped ones with strength 0.5 or more are listed in `session.md` as rejected so a missed swing is visible.
+4. MediaPipe Pose Landmarker (lite) runs on the clip window around each candidate (impact minus 2.5s to plus 1.5s) at 640px and at most 60fps, never on the whole video. The largest person in frame is the golfer. A candidate is confirmed when the hands (midpoint of both wrists, which works for either handedness) peak in speed within 300ms of the onset, looking at plus or minus 1.5s. Unconfirmed candidates are recorded in `session.md` as rejected with the reason.
+5. Videos under 15s keep only the single strongest confirmed candidate.
+6. Zero confirmed swings is not a failure. The session is written with `session.md` only.
 
 All thresholds live in a config module with environment variable overrides (`GOLF_ONSET_MIN_GAP_S`, `GOLF_CONFIRM_WINDOW_MS`, and so on) so tuning does not need a rebuild.
 
 ### Slicing and frames
 - **Clip**: impact minus 2.5s to impact plus 1.5s, re-encoded (stream copy snaps to keyframes) to 1080p long edge, H.264 CRF 23, AAC. About 3MB each. The clip is for the owner, not for Claude.
-- **Frames are decoded from the original video**, never from the re-encoded clip.
-  - Address: last low-motion window of the wrists before takeaway
-  - Top: wrist height peak or direction reversal between address and impact
-  - Impact: frame nearest the audio onset
-  - Finish: where motion settles after impact, capped at plus 1.5s
+- **Frames are decoded from the original video**, never from the re-encoded clip. HDR video (HLG or PQ, the iPhone default) is tone mapped to SDR BT.709 so frames are not flat and washed out. Portrait rotation is applied.
+  - Address: end of the last still stretch (0.2s or more) of the hands before the top
+  - Top: highest hands in the 2s before impact
+  - Impact: frame nearest the corrected audio onset
+  - Finish: highest hands from 0.3s after impact to the end of the clip window
   - For address, top, and finish, the sharpest frame (Laplacian variance) within plus or minus 2 frames of the target is used. Impact is never moved.
-- **Images**: JPEG quality 90, sRGB, metadata stripped, label and timestamp burned into a corner.
+- **Images**: JPEG quality 90, sRGB, metadata stripped, label and timestamp burned into a corner. Every image fits 2560px on the long edge and stays under 3.75MP.
   - `01` to `04`: full frame, 2560px long edge (never upscaled), no overlay
-  - `05-impact-zoom.jpg`: native-resolution crop around the ball area (ankle midpoint from the address pose) for impact minus 1, impact, and impact plus 1, side by side, scaled down only if the strip exceeds 2560px
-  - `06-pose-sheet.jpg`: 2x2 grid of the four positions with the pose skeleton drawn, 2560px wide
+  - `05-impact-zoom.jpg`: a native-resolution band at ball height (centered on the ankles, a quarter of the frame tall, the frame width up to 1.2 frame heights) for impact minus 1, impact, and impact plus 1, stacked. The ball sits between the feet face-on but past the toes down the line, so the band covers both instead of guessing
+  - `06-pose-sheet.jpg`: 2x2 grid of the four positions with the pose skeleton drawn, fit to 2560px on the long edge
 - `session.md` lists source name, capture time, hash, pipeline version, each swing with its impact timestamp and confidence, rejected candidates, and removed duplicates.
 - Recording tip for the README: in daylight, 240fps slo-mo usually helps the impact frames more than 4K does because the faster shutter cuts blur. Both work.
 
@@ -109,7 +111,8 @@ All thresholds live in a config module with environment variable overrides (`GOL
   - `failed/` originals older than 3 days are permanently deleted (`GOLF_FAILED_TTL_DAYS`)
   - `clip.mp4` files older than 14 days are permanently deleted (`GOLF_CLIP_TTL_DAYS`)
   - session folders older than 60 days are permanently deleted (`GOLF_SESSION_TTL_DAYS`)
-  - if `golf/` is still over 3GiB (`GOLF_MAX_BYTES`), the oldest sessions are deleted until it is under
+  - if session files still total over 3GiB (`GOLF_MAX_BYTES`), the oldest sessions are deleted until they are under. Failed originals do not count, since they expire in 3 days anyway and one large failed upload should not push every session out
+  - everything the pipeline creates is tagged in `appProperties` (`golfEtl`, `kind`, `sessionFolder`), so the sweep is one paginated listing instead of a walk of every folder
 - Rough sizes: a 30-swing session is about 200MB on day one and about 120MB once clips expire.
 
 ### Failures
@@ -133,7 +136,8 @@ Whatever schedules `golf-etl poll-drive` must guarantee:
   - onset detection against synthetic audio (clicks plus noise)
   - frame selection against canned pose sequences
   - every row of the idempotency table and every failure scenario against a fake Drive client; the Drive layer sits behind a small interface for this
-  - a few small real fixtures checked in, full range sessions kept local and referenced from `labels.yaml`
+  - synthetic videos generated with ffmpeg inside the tests (test pattern, clicks, HDR, rotation)
+  - real footage kept out of git in `local/` with a `local/labels.yaml` of hand-labeled impact times; `pytest -m real` runs eval and full processing on it and skips when it is missing
 - GitHub Actions runs tests and pushes `ghcr.io/rumstead/golf-etl:latest` on `main`. The cluster pulls `latest` with `imagePullPolicy: Always`, so there are no version tags to bump.
 - Renovate (`renovate.json5`): `config:recommended` with the `pip_requirements`, `dockerfile`, and `github-actions` managers, Monday before 6am America/New_York like homelab, with `mediapipe`, `opencv-*`, and `numpy` grouped since their versions are coupled.
 
@@ -155,19 +159,21 @@ A video is identified by its Drive checksum, not its filename. One video maps to
 ### Swing detection
 Swings are found by audio onsets confirmed by a wrist speed peak.
 - **Range session with neighboring bays**: each of the owner's swings is emitted separately, and unconfirmed onsets are listed in `session.md` as rejected with timestamps.
+- **Impact timing**: the impact frame is within two frames of the first frame showing the clubface on the ball, on 120fps footage.
 - **Single-swing clip**: a video under 15 seconds emits at most one swing.
 - **No swing found**: the session is written with `session.md` stating zero swings, and it is not a failure.
 
 ### Swing frames for Claude
 Each swing gets a clip and labeled JPEGs decoded from the original video, 2560px long edge or smaller and never upscaled.
 - **Detected swing**: the folder contains `clip.mp4` and `01-address.jpg` through `06-pose-sheet.jpg`, each JPEG sRGB and labeled with position and timestamp.
-- **Impact zoom**: `05-impact-zoom.jpg` shows native-resolution crops of the ball area for the frames before, at, and after impact.
+- **Impact zoom**: `05-impact-zoom.jpg` shows a native-resolution band at ball height for the frames before, at, and after impact, with the ball in it from either camera angle.
+- **iPhone footage**: HDR, portrait, APAC-plus-AAC `.mov` files process like any other video, with natural color.
 - **Blurry target frame**: for address, top, and finish, a sharper frame within two frames is used instead.
 
 ### Drive storage bounds
 - **Original after success**: permanently deleted, not trashed.
 - **Expiry sweep**: at the end of a run, failed originals older than 3 days, clips older than 14 days, and sessions older than 60 days are permanently deleted, honoring overrides.
-- **Size cap**: if `golf/` is over 3GiB after the sweep, the oldest sessions are deleted until it is under.
+- **Size cap**: if session files total over 3GiB after the sweep, the oldest sessions are deleted until they are under. Failed originals never evict sessions.
 
 ### Failure handling
 - **Processing error**: on the first or second failure the video returns to `golf/inbox` with its attempt count incremented.
