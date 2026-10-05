@@ -1,0 +1,43 @@
+{
+  // Covers requirements*.txt, the Dockerfile base image, and GitHub Actions.
+  // The pose model URL in the Dockerfile is pinned by hand.
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: [
+    'config:recommended',
+    ':dependencyDashboard',
+  ],
+  timezone: 'America/New_York',
+  schedule: ['before 6am on monday'],
+  prConcurrentLimit: 5,
+  labels: ['dependencies'],
+  enabledManagers: ['pip_requirements', 'dockerfile', 'github-actions'],
+  customManagers: [
+    {
+      // ARG GOLF_RCLONE_VERSION=v1.75.1 in the Dockerfile
+      customType: 'regex',
+      managerFilePatterns: ['/^Dockerfile$/'],
+      matchStrings: ['ARG GOLF_RCLONE_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)'],
+      depNameTemplate: 'rclone/rclone',
+      datasourceTemplate: 'github-releases',
+    },
+  ],
+  packageRules: [
+    {
+      matchUpdateTypes: ['minor', 'patch', 'digest'],
+      groupName: 'non-major dependencies',
+    },
+    {
+      // mediapipe pins its own numpy and opencv expectations, move them together.
+      matchManagers: ['pip_requirements'],
+      matchPackageNames: ['mediapipe', 'numpy', 'opencv-contrib-python'],
+      groupName: 'mediapipe stack',
+    },
+    {
+      // A new Python minor needs mediapipe wheels for it first.
+      matchManagers: ['dockerfile'],
+      matchPackageNames: ['python'],
+      matchUpdateTypes: ['major', 'minor'],
+      dependencyDashboardApproval: true,
+    },
+  ],
+}

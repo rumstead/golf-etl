@@ -1,0 +1,7 @@
+librosa==1.0.0
+mediapipe==1.0.1
+numpy==2.5.3
+opencv-contrib-python==5.0.0.93
+pillow==12.3.0
+pyyaml==6.0.3
+scipy==1.18.1

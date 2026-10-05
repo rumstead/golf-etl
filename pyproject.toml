@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=80"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "golf-etl"
+version = "0.1.0"
+description = "Break down golf swing videos into images for AI analysis"
+requires-python = ">=3.12"
+
+[project.scripts]
+golf-etl = "golf_etl.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "media: needs ffmpeg and the pose model (runs in the container)",
+    "real: real footage from local/, skipped when it is missing",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
