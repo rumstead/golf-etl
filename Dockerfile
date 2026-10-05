@@ -8,10 +8,10 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 # rclone talks to Google Drive with its own verified OAuth app, so no Google Cloud project is needed
-ARG RCLONE_VERSION=v1.75.1
-ADD https://downloads.rclone.org/${RCLONE_VERSION}/rclone-${RCLONE_VERSION}-linux-amd64.zip /tmp/rclone.zip
+ARG GOLF_RCLONE_VERSION=v1.75.1
+ADD https://downloads.rclone.org/${GOLF_RCLONE_VERSION}/rclone-${GOLF_RCLONE_VERSION}-linux-amd64.zip /tmp/rclone.zip
 RUN python -m zipfile -e /tmp/rclone.zip /tmp/rclone \
-    && install -m 755 /tmp/rclone/rclone-${RCLONE_VERSION}-linux-amd64/rclone /usr/local/bin/rclone \
+    && install -m 755 /tmp/rclone/rclone-${GOLF_RCLONE_VERSION}-linux-amd64/rclone /usr/local/bin/rclone \
     && rm -rf /tmp/rclone /tmp/rclone.zip
 ADD --chmod=644 https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task /opt/golf-etl/pose_landmarker_lite.task
 COPY pyproject.toml .

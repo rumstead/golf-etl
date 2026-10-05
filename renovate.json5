@@ -13,10 +13,10 @@
   enabledManagers: ['pip_requirements', 'dockerfile', 'github-actions'],
   customManagers: [
     {
-      // ARG RCLONE_VERSION=v1.75.1 in the Dockerfile
+      // ARG GOLF_RCLONE_VERSION=v1.75.1 in the Dockerfile
       customType: 'regex',
       managerFilePatterns: ['/^Dockerfile$/'],
-      matchStrings: ['ARG RCLONE_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)'],
+      matchStrings: ['ARG GOLF_RCLONE_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)'],
       depNameTemplate: 'rclone/rclone',
       datasourceTemplate: 'github-releases',
     },
