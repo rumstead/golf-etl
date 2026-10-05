@@ -21,14 +21,12 @@ def main(argv: list[str] | None = None) -> int:
     e = sub.add_parser("eval", help="score detection against labeled impact times")
     e.add_argument("labels", type=Path)
     sub.add_parser("poll-drive", help="process everything in the Drive inbox once")
-    a = sub.add_parser("auth", help="mint a Drive refresh token")
-    a.add_argument("client_secrets", type=Path)
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = Settings.from_env()
-    return {"process": cmd_process, "eval": cmd_eval, "poll-drive": cmd_poll, "auth": cmd_auth}[
-        args.command
-    ](args, cfg)
+    return {"process": cmd_process, "eval": cmd_eval, "poll-drive": cmd_poll}[args.command](
+        args, cfg
+    )
 
 
 def cmd_process(args, cfg: Settings) -> int:
@@ -53,40 +51,21 @@ def cmd_eval(args, cfg: Settings) -> int:
 
 
 def cmd_poll(args, cfg: Settings) -> int:
-    from golf_etl.drive.client import Folders
-    from golf_etl.drive.google import GoogleDrive, credentials
     from golf_etl.drive.poller import Poller
+    from golf_etl.drive.rclone import RcloneDrive
     from golf_etl.drive.retention import sweep
     from golf_etl.pipeline import process_video
 
-    try:
-        creds = credentials(
-            os.environ["GOLF_DRIVE_CLIENT_ID"],
-            os.environ["GOLF_DRIVE_CLIENT_SECRET"],
-            os.environ["GOLF_DRIVE_REFRESH_TOKEN"],
-        )
-    except KeyError as missing:
-        print(f"missing environment variable {missing}", file=sys.stderr)
+    if cfg.remote.startswith("gdrive:") and not os.environ.get("RCLONE_CONFIG_GDRIVE_TOKEN"):
+        print("missing environment variable RCLONE_CONFIG_GDRIVE_TOKEN", file=sys.stderr)
         return 2
     version = os.environ.get("GOLF_ETL_VERSION", "dev")
-    drive = GoogleDrive.connect(creds)
-    folders = Folders.resolve(drive, cfg.root_folder)
+    drive = RcloneDrive(cfg.remote)
     process = functools.partial(process_video, cfg=cfg, version=version)
-    report = Poller(drive, folders, cfg, process, Path(cfg.scratch_dir), version).run()
+    report = Poller(drive, cfg, process, Path(cfg.scratch_dir), version).run()
     log.info("poll: %s", report)
-    swept = sweep(drive, folders, cfg, datetime.now(UTC))
+    swept = sweep(drive, cfg, datetime.now(UTC))
     log.info("sweep: deleted %d, %d bytes in sessions", len(swept.deleted), swept.bytes_after)
-    return 0
-
-
-def cmd_auth(args, cfg: Settings) -> int:
-    from google_auth_oauthlib.flow import InstalledAppFlow
-
-    from golf_etl.drive.google import SCOPES
-
-    flow = InstalledAppFlow.from_client_secrets_file(str(args.client_secrets), SCOPES)
-    creds = flow.run_local_server(port=0, access_type="offline", prompt="consent")
-    print(f"client_id: {creds.client_id}\nrefresh_token: {creds.refresh_token}")
     return 0
 
 

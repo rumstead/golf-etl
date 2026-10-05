@@ -43,7 +43,7 @@ claude.ai: "review my latest golf session" -> golf-swing-analysis skill
 
 ### Upload and trigger
 - **Google Drive inbox, polled.** Drive push notifications need a public HTTPS webhook, which the cluster does not have. Polling every 3 minutes keeps upload to processing start at about 3 minutes. Alternatives: in-cluster S3 (MinIO or Garage) with an iOS Shortcut needs a way in from off the LAN; a watcher that spawns a Job per video adds moving parts for one upload per range trip.
-- **Drive auth is an OAuth refresh token for the owner's account**, from a Desktop OAuth client in a personal GCP project with the `drive` scope. Service accounts have no storage quota on a personal Gmail Drive, so their uploads fail. `drive.file` cannot delete files the owner uploaded from the phone. The consent screen must be in Production status, since refresh tokens for apps in Testing status expire after 7 days.
+- **Drive access goes through the `rclone` binary** with rclone's own verified OAuth app and the full `drive` scope (inbox uploads come from the phone, so `drive.file` cannot see them). The owner runs `rclone authorize "drive"` once and the token goes into the environment as `RCLONE_CONFIG_GDRIVE_TOKEN`. Alternatives: a personal Google Cloud OAuth client, which Google would not let a consumer Gmail account use without publishing and branding verification, and a service account, which has no storage quota on a personal Drive. rclone refreshes the access token itself; the refresh token does not expire while it is used.
 
 ### Drive layout
 ```
@@ -68,8 +68,8 @@ Non-video files in `inbox/` are left alone (strike photos will use them later).
 
 ### Identity and idempotency
 - **Identity is the Drive `sha256Checksum`**, falling back to `md5Checksum`. Drive computes both on upload, so no download is needed, and filenames like `IMG_1234.MOV` repeat across days. A file with neither checksum yet is skipped until the next poll.
-- **Session ID** is `<capture time YYYY-MM-DD-HHMM>-<first 8 hex of the hash>`. Capture time comes from the video's `creation_time` (ffprobe), falling back to Drive `createdTime`. The session folder carries `appProperties` `{sha256, sourceName, pipelineVersion}` and is found with an `appProperties has {key='sha256' and value='...'}` query.
-- **Claiming**: a video is moved from `inbox/` to `processing/` before any work. Runs never overlap and a failed run is not restarted in place (see Runtime contract), so anything in `processing/` when a run starts belongs to a dead run. It is moved back to `inbox/` with `appProperties.attempts` incremented and retried in the same run.
+- **Session ID** is `<capture time YYYY-MM-DD-HHMM>-<first 8 hex of the hash>`. Capture time comes from the video's `creation_time` (ffprobe), falling back to the file's modified time in Drive. Each session folder holds a `.golf-etl.json` marker with `{sha256, sourceName, pipelineVersion, published}`; a session is found by listing folder names (which end in the hash prefix) and confirming the marker. Retry counts live in `golf/.golf-etl/state.json`, which is safe with a single writer since runs never overlap.
+- **Claiming**: a video is moved from `inbox/` to `processing/` before any work. Runs never overlap and a failed run is not restarted in place (see Runtime contract), so anything in `processing/` when a run starts belongs to a dead run. It is moved back to `inbox/` with its retry count incremented and retried in the same run.
 - **Atomic replace**: output is written to `sessions/.tmp-<session-id>/`. On success any existing `sessions/<session-id>/` is permanently deleted and the temp folder is renamed into place.
 
 | Case | Behavior |
@@ -114,7 +114,7 @@ All thresholds live in a config module with environment variable overrides (`GOL
   - `clip.mp4` files older than 14 days are permanently deleted (`GOLF_CLIP_TTL_DAYS`)
   - session folders older than 60 days are permanently deleted (`GOLF_SESSION_TTL_DAYS`)
   - if session files still total over 3GiB (`GOLF_MAX_BYTES`), the oldest sessions are deleted until they are under. Failed originals do not count, since they expire in 3 days anyway and one large failed upload should not push every session out
-  - everything the pipeline creates is tagged in `appProperties` (`golfEtl`, `kind`, `sessionFolder`), so the sweep is one paginated listing instead of a walk of every folder
+  - the sweep is one recursive listing of `sessions/`: a clip is any `clip.mp4`, a session's age is its marker's time, and failed originals age from their `.error.txt` (a video's own time is when it was shot)
 - Rough sizes: a 30-swing session is about 200MB on day one and about 120MB once clips expire.
 
 ### Failures
@@ -126,7 +126,7 @@ Whatever schedules `golf-etl poll-drive` must guarantee:
 - Runs never overlap (`concurrencyPolicy: Forbid`)
 - A failed run is not restarted in place (`restartPolicy: Never`, `backoffLimit: 0`), so recovery at startup is safe
 - About 10Gi of scratch disk (4K/60 is about 400MB per minute) and up to 3Gi of memory
-- `GOLF_DRIVE_CLIENT_ID`, `GOLF_DRIVE_CLIENT_SECRET`, `GOLF_DRIVE_REFRESH_TOKEN` in the environment, and optionally `GOLF_ROOT_FOLDER` (default `golf`) plus any threshold or TTL overrides
+- `RCLONE_CONFIG_GDRIVE_TYPE=drive`, `RCLONE_CONFIG_GDRIVE_SCOPE=drive`, `RCLONE_CONFIG_GDRIVE_TOKEN` (the JSON from `rclone authorize`) and `RCLONE_DRIVE_USE_TRASH=false` in the environment, and optionally `GOLF_REMOTE` (default `gdrive:golf`) plus any threshold or TTL overrides
 
 ## Repo
 - Python 3.12, `requirements.txt` with exact pins, Dockerfile on `python:3.12-slim` with ffmpeg and the bundled Pose Landmarker lite model.
@@ -190,7 +190,7 @@ Each swing gets a clip and labeled JPEGs decoded from the original video, 2560px
 - claude.ai's Drive connector might not hand JPEGs to Claude as images → checked first with a test image, before any pipeline code. If it fails, the fallback is calling the Claude API from the pipeline.
 - `latest` with `Always` means a bad push breaks the next run → failures are retried and land in `failed/`, and the original is kept for 3 days.
 - Audio onsets at a busy range → pose confirmation plus the eval harness. Rejected candidates in `session.md` make misses visible.
-- Full `drive` scope on an unverified personal OAuth app → limited to the owner's account; the refresh token only lives in the homelab SOPS secret.
+- Full `drive` scope through rclone's shared OAuth app → the token only reaches the owner's account and lives only in the homelab SOPS secret; rclone's app shares Google API quota with other rclone users, which a few calls every 3 minutes does not approach.
 
 ## Build order
 1. Spike: confirm claude.ai reads a 2560px JPEG through the Drive connector.

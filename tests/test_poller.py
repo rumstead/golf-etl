@@ -1,11 +1,13 @@
+import json
 from datetime import timedelta
 from pathlib import Path
 
 import pytest
 
 from golf_etl.config import Settings
-from golf_etl.drive.client import Folders
+from golf_etl.drive.client import STATE, State
 from golf_etl.drive.poller import Poller
+from golf_etl.drive.retention import sweep
 from golf_etl.pipeline import SessionResult
 from tests.fake_drive import FakeDrive
 
@@ -35,191 +37,215 @@ class FakeProcess:
 @pytest.fixture
 def env(tmp_path):
     drive = FakeDrive()
-    folders = Folders.resolve(drive, "golf")
     process = FakeProcess()
 
     def run():
-        return Poller(drive, folders, Settings(), process, tmp_path / "scratch", "test").run()
+        return Poller(drive, Settings(), process, tmp_path / "scratch", "test").run()
 
-    return drive, folders, process, run
-
-
-def sessions(drive, folders):
-    return drive.names_in(folders.sessions)
+    return drive, process, run
 
 
-def test_resolve_creates_the_folder_layout_once():
-    drive = FakeDrive()
-    first = Folders.resolve(drive, "golf")
-    assert Folders.resolve(drive, "golf") == first
-    assert drive.tree() == ["golf", "golf/failed", "golf/inbox", "golf/processing", "golf/sessions"]
+def sessions(drive):
+    return drive.names_in("sessions")
+
+
+def attempts(drive, name_data: bytes) -> int:
+    import hashlib
+
+    return State.load(drive).attempts.get(hashlib.sha256(name_data).hexdigest(), 0)
+
+
+def test_first_run_creates_the_folder_layout(env):
+    drive, process, run = env
+    run()
+    assert {"inbox", "processing", "failed", "sessions"} <= set(drive.dirs)
 
 
 def test_video_becomes_a_session_and_the_original_is_deleted(env):
-    drive, folders, process, run = env
-    drive.add_video("IMG_1.MOV", folders.inbox, b"swing one")
+    drive, process, run = env
+    drive.add_video("IMG_1.MOV", data=b"swing one")
     report = run()
     assert len(report.published) == 1
     sid = report.published[0]
-    assert sessions(drive, folders) == [sid]
-    assert drive.names_in(folders.inbox) == []
-    assert drive.names_in(folders.processing) == []
+    assert sessions(drive) == [sid]
+    assert drive.names_in("inbox") == []
+    assert drive.names_in("processing") == []
     assert "IMG_1.MOV" in drive.deleted
-    assert f"golf/sessions/{sid}/swing-01/01-address.jpg" in drive.tree()
+    assert f"sessions/{sid}/swing-01/01-address.jpg" in drive.tree()
 
 
-def test_session_folder_carries_checksum_and_files_are_tagged(env):
-    drive, folders, process, run = env
-    drive.add_video("IMG_1.MOV", folders.inbox, b"swing one")
-    run()
-    session = drive.list_children(folders.sessions)[0]
-    assert session.app_properties["sha256"] == process.calls[0]["checksum"]
-    assert session.app_properties["sourceName"] == "IMG_1.MOV"
-    clip = next(f for f in drive.list_tagged() if f.name == "clip.mp4")
-    assert clip.app_properties["kind"] == "clip"
-    assert clip.app_properties["sessionFolder"] == session.id
+def test_session_folder_has_a_marker_with_the_checksum(env):
+    drive, process, run = env
+    drive.add_video("IMG_1.MOV", data=b"swing one")
+    sid = run().published[0]
+    marker = json.loads(drive.read_text(f"sessions/{sid}/.golf-etl.json"))
+    assert marker["sha256"] == process.calls[0]["checksum"]
+    assert marker["sourceName"] == "IMG_1.MOV"
+    assert marker["pipelineVersion"] == "test"
 
 
 def test_non_video_files_are_left_alone(env):
-    drive, folders, process, run = env
-    drive.add_video("IMG_1.MOV", folders.inbox)
-    drive.add_video("strike.jpg", folders.inbox, b"photo", mime="image/jpeg")
+    drive, process, run = env
+    drive.add_video("IMG_1.MOV")
+    drive.add("inbox/strike.jpg", b"photo")
     run()
-    assert drive.names_in(folders.inbox) == ["strike.jpg"]
+    assert drive.names_in("inbox") == ["strike.jpg"]
 
 
 def test_duplicates_in_one_poll_are_processed_once(env):
-    drive, folders, process, run = env
-    drive.add_video("IMG_1.MOV", folders.inbox, b"same", created=drive.now)
-    drive.add_video(
-        "IMG_1 (1).MOV", folders.inbox, b"same", created=drive.now + timedelta(seconds=5)
-    )
+    drive, process, run = env
+    drive.add_video("IMG_1.MOV", data=b"same", modified=drive.now)
+    drive.add_video("IMG_1 (1).MOV", data=b"same", modified=drive.now + timedelta(seconds=5))
     report = run()
     assert len(process.calls) == 1
     assert process.calls[0]["duplicates"] == ["IMG_1 (1).MOV"]
     assert report.duplicates == ["IMG_1 (1).MOV"]
-    assert len(sessions(drive, folders)) == 1
-    assert drive.names_in(folders.inbox) == []
+    assert len(sessions(drive)) == 1
+    assert drive.names_in("inbox") == []
 
 
 def test_reupload_after_success_replaces_the_session(env):
-    drive, folders, process, run = env
-    drive.add_video("IMG_1.MOV", folders.inbox, b"same")
+    drive, process, run = env
+    drive.add_video("IMG_1.MOV", data=b"same")
+    sid = run().published[0]
+    drive.add_video("IMG_1.MOV", data=b"same")
     run()
-    first = drive.list_children(folders.sessions)[0]
-    drive.add_video("IMG_1.MOV", folders.inbox, b"same")
-    run()
-    now = drive.list_children(folders.sessions)
-    assert [s.name for s in now] == [first.name]
-    assert now[0].id != first.id
+    assert sessions(drive) == [sid]
     assert len(process.calls) == 2
+    assert drive.tree().count(f"sessions/{sid}/swing-01/01-address.jpg") == 1
 
 
 def test_same_filename_different_content_makes_two_sessions(env):
-    drive, folders, process, run = env
-    drive.add_video("IMG_1.MOV", folders.inbox, b"monday")
-    drive.add_video("IMG_1.MOV", folders.inbox, b"friday")
+    drive, process, run = env
+    drive.add_video("IMG_1.MOV", data=b"monday")
+    drive.add_video("IMG_1.MOV", data=b"friday")  # Drive allows the same name twice
     run()
-    assert len(sessions(drive, folders)) == 2
+    assert len(sessions(drive)) == 2
 
 
 def test_first_and_second_failures_go_back_to_the_inbox(env):
-    drive, folders, process, run = env
-    fid = drive.add_video("bad.MOV", folders.inbox)
+    drive, process, run = env
+    drive.add_video("bad.MOV", data=b"bad")
     process.fail_on.add("bad.MOV")
     assert run().retrying == ["bad.MOV"]
-    assert drive.files[fid].app_properties["attempts"] == "1"
-    assert drive.names_in(folders.inbox) == ["bad.MOV"]
+    assert attempts(drive, b"bad") == 1
+    assert drive.names_in("inbox") == ["bad.MOV"]
     run()
-    assert drive.files[fid].app_properties["attempts"] == "2"
+    assert attempts(drive, b"bad") == 2
 
 
 def test_third_failure_moves_to_failed_with_an_error_file(env):
-    drive, folders, process, run = env
-    drive.add_video("bad.MOV", folders.inbox)
+    drive, process, run = env
+    drive.add_video("bad.MOV", data=b"bad")
     process.fail_on.add("bad.MOV")
     run()
     run()
     assert run().failed == ["bad.MOV"]
-    assert drive.names_in(folders.failed) == ["bad.MOV", "bad.MOV.error.txt"]
-    error = next(f for f in drive.list_children(folders.failed) if f.name.endswith(".txt"))
-    assert b"cannot decode bad.MOV" in drive.content[error.id]
-    assert drive.names_in(folders.inbox) == []
+    assert drive.names_in("failed") == ["bad.MOV", "bad.MOV.error.txt"]
+    assert b"cannot decode bad.MOV" in drive.content("failed/bad.MOV.error.txt")
+    assert drive.names_in("inbox") == []
 
 
 def test_video_left_in_processing_is_recovered_and_retried(env):
-    drive, folders, process, run = env
-    drive.add_video("IMG_1.MOV", folders.processing, props={"attempts": "1"})
+    drive, process, run = env
+    drive.add_video("IMG_1.MOV", folder="processing")
     report = run()
     assert report.recovered == ["IMG_1.MOV"]
     assert len(report.published) == 1
-    assert drive.names_in(folders.processing) == []
+    assert drive.names_in("processing") == []
 
 
 def test_recovery_counts_as_an_attempt(env):
-    drive, folders, process, run = env
-    fid = drive.add_video("IMG_1.MOV", folders.processing)
+    drive, process, run = env
+    drive.add_video("IMG_1.MOV", folder="processing", data=b"x")
     process.fail_on.add("IMG_1.MOV")
     run()
-    assert drive.files[fid].app_properties["attempts"] == "2"  # recovery, then the failure
+    assert attempts(drive, b"x") == 2  # recovery, then the failure
 
 
 def test_recovered_video_past_the_limit_goes_to_failed(env):
-    drive, folders, process, run = env
-    drive.add_video("IMG_1.MOV", folders.processing, props={"attempts": "2"})
+    drive, process, run = env
+    import hashlib
+
+    drive.write_text(STATE, json.dumps({"attempts": {hashlib.sha256(b"x").hexdigest(): 2}}))
+    drive.add_video("IMG_1.MOV", folder="processing", data=b"x")
     assert run().failed == ["IMG_1.MOV"]
 
 
 def test_reupload_of_a_failed_video_clears_it_and_starts_fresh(env):
-    drive, folders, process, run = env
-    drive.add_video("bad.MOV", folders.inbox, b"data")
+    drive, process, run = env
+    drive.add_video("bad.MOV", data=b"data")
     process.fail_on.add("bad.MOV")
     run()
     run()
     run()
     process.fail_on.clear()
-    fresh = drive.add_video("bad.MOV", folders.inbox, b"data")
+    drive.add_video("bad.MOV", data=b"data")
     report = run()
-    assert drive.names_in(folders.failed) == []
+    assert drive.names_in("failed") == []
     assert len(report.published) == 1
-    assert fresh not in drive.files
+    assert attempts(drive, b"data") == 0
 
 
 def test_crash_after_upload_keeps_the_previous_session(env, monkeypatch):
-    drive, folders, process, run = env
-    drive.add_video("IMG_1.MOV", folders.inbox, b"same")
-    run()
-    old = drive.list_children(folders.sessions)[0]
-    drive.add_video("IMG_1.MOV", folders.inbox, b"same")
-    real_rename = drive.rename
+    drive, process, run = env
+    drive.add_video("IMG_1.MOV", data=b"same")
+    sid = run().published[0]
+    drive.add_video("IMG_1.MOV", data=b"same")
+    real_move = drive.move
 
-    def die_on_swap(file_id, name):
-        if name.startswith(".old-"):
+    def die_on_swap(src, dst):
+        if dst.endswith(f".old-{sid}"):
             raise RuntimeError("killed")
-        real_rename(file_id, name)
+        real_move(src, dst)
 
-    monkeypatch.setattr(drive, "rename", die_on_swap)
+    monkeypatch.setattr(drive, "move", die_on_swap)
     run()
-    assert old.id in drive.files
-    assert drive.files[old.id].name == old.name
-    assert f"golf/sessions/{old.name}/swing-01/01-address.jpg" in drive.tree()
+    assert f"sessions/{sid}/swing-01/01-address.jpg" in drive.tree()
+
+
+def test_crash_between_the_swap_renames_then_a_failed_upload_keeps_a_session(env, monkeypatch):
+    drive, process, run = env
+    drive.add_video("IMG_1.MOV", data=b"same")
+    sid = run().published[0]
+    real_move, real_upload = drive.move, drive.upload_tree
+
+    def die_after_moving_the_old_one(src, dst):
+        if dst == f"sessions/{sid}":
+            raise RuntimeError("killed")
+        real_move(src, dst)
+
+    monkeypatch.setattr(drive, "move", die_after_moving_the_old_one)
+    drive.add_video("IMG_1.MOV", data=b"same")
+    run()
+    assert f".old-{sid}" in sessions(drive)
+    monkeypatch.setattr(drive, "move", real_move)
+
+    def die_uploading(src, dst):
+        raise RuntimeError("killed mid-upload")
+
+    monkeypatch.setattr(drive, "upload_tree", die_uploading)
+    drive.add_video("IMG_1.MOV", data=b"same")
+    run()
+    monkeypatch.setattr(drive, "upload_tree", real_upload)
+    sweep(drive, Settings(), drive.now + timedelta(days=2))
+    assert f"sessions/{sid}/swing-01/01-address.jpg" in drive.tree()
 
 
 def test_leftover_temp_folder_is_replaced_on_the_next_publish(env):
-    drive, folders, process, run = env
-    drive.add_video("IMG_1.MOV", folders.inbox, b"same")
+    drive, process, run = env
+    drive.add_video("IMG_1.MOV", data=b"same")
+    sid = run().published[0]
+    drive.mkdir(f"sessions/.tmp-{sid}")
+    drive.add_video("IMG_1.MOV", data=b"same")
     run()
-    sid = sessions(drive, folders)[0]
-    drive.create_folder(f".tmp-{sid}", folders.sessions)
-    drive.add_video("IMG_1.MOV", folders.inbox, b"same")
-    run()
-    assert sessions(drive, folders) == [sid]
+    assert sessions(drive) == [sid]
 
 
 def test_one_bad_video_does_not_stop_the_others(env):
-    drive, folders, process, run = env
-    drive.add_video("bad.MOV", folders.inbox, b"bad")
-    drive.add_video("good.MOV", folders.inbox, b"good")
+    drive, process, run = env
+    drive.add_video("bad.MOV", data=b"bad")
+    drive.add_video("good.MOV", data=b"good")
     process.fail_on.add("bad.MOV")
     report = run()
     assert report.retrying == ["bad.MOV"]
@@ -227,42 +253,11 @@ def test_one_bad_video_does_not_stop_the_others(env):
 
 
 def test_awkward_filenames_survive_the_round_trip(env):
-    drive, folders, process, run = env
+    drive, process, run = env
     name = "Bob's swing #2 (café).MOV"
-    drive.add_video(name, folders.inbox, b"swing")
+    drive.add_video(name, data=b"swing")
     process.fail_on.add(name)
     run()
     run()
     run()
-    assert drive.names_in(folders.failed) == sorted([name, f"{name}.error.txt"])
-
-
-def test_crash_between_the_swap_renames_then_a_failed_upload_keeps_a_session(env, monkeypatch):
-    from golf_etl.drive.retention import sweep
-
-    drive, folders, process, run = env
-    drive.add_video("IMG_1.MOV", folders.inbox, b"same")
-    run()
-    sid = sessions(drive, folders)[0]
-    real_rename, real_upload = drive.rename, drive.upload
-
-    def die_after_moving_the_old_one(file_id, name):
-        if name == sid:
-            raise RuntimeError("killed")
-        real_rename(file_id, name)
-
-    monkeypatch.setattr(drive, "rename", die_after_moving_the_old_one)
-    drive.add_video("IMG_1.MOV", folders.inbox, b"same")
-    run()
-    assert f".old-{sid}" in sessions(drive, folders)
-    monkeypatch.setattr(drive, "rename", real_rename)
-
-    def die_uploading(src, parent_id, props):
-        raise RuntimeError("killed mid-upload")
-
-    monkeypatch.setattr(drive, "upload", die_uploading)
-    drive.add_video("IMG_1.MOV", folders.inbox, b"same")
-    run()
-    monkeypatch.setattr(drive, "upload", real_upload)
-    sweep(drive, folders, Settings(), drive.now + timedelta(days=2))
-    assert f"golf/sessions/{sid}/swing-01/01-address.jpg" in drive.tree()
+    assert drive.names_in("failed") == sorted([name, f"{name}.error.txt"])

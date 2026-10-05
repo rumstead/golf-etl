@@ -1,77 +1,81 @@
-"""The slice of Google Drive the poller needs. GoogleDrive implements it; tests use a fake."""
+"""The slice of Google Drive the poller needs, addressed by path under the golf root.
 
-from collections.abc import Mapping
+RcloneDrive implements it; tests use an in-memory fake.
+"""
+
+import json
 from dataclasses import dataclass, field
 from datetime import datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Protocol
 
-FOLDER_MIME = "application/vnd.google-apps.folder"
-TAG = "golfEtl"  # appProperties key set on everything the pipeline creates
+INBOX = "inbox"
+PROCESSING = "processing"
+FAILED = "failed"
+SESSIONS = "sessions"
+STATE = ".golf-etl/state.json"
+MARKER = ".golf-etl.json"  # inside each session folder
+VIDEO_SUFFIXES = {".mov", ".mp4", ".m4v"}
 
 
 @dataclass(frozen=True)
-class DriveFile:
-    id: str
-    name: str
-    mime_type: str
-    parents: tuple[str, ...]
-    created: datetime
-    size: int = 0
+class Entry:
+    path: str  # relative to the golf root, "/" separated
+    size: int
+    modified: datetime
+    is_dir: bool = False
+    mime: str = ""
     sha256: str | None = None
-    md5: str | None = None
-    app_properties: Mapping[str, str] = field(default_factory=dict)
 
     @property
-    def checksum(self) -> str | None:
-        return self.sha256 or self.md5
-
-    @property
-    def is_folder(self) -> bool:
-        return self.mime_type == FOLDER_MIME
+    def name(self) -> str:
+        return PurePosixPath(self.path).name
 
     @property
     def is_video(self) -> bool:
-        return self.mime_type.startswith("video/")
+        if self.is_dir:
+            return False
+        return self.mime.startswith("video/") or PurePosixPath(self.path).suffix.lower() in (
+            VIDEO_SUFFIXES
+        )
 
 
 class Drive(Protocol):
-    def find_folder(self, name: str, parent_id: str) -> str | None: ...
-    def create_folder(
-        self, name: str, parent_id: str, props: Mapping[str, str] | None = None
-    ) -> str: ...
-    def list_children(self, folder_id: str) -> list[DriveFile]: ...
-    def list_tagged(self) -> list[DriveFile]: ...
-    def find_by_property(self, parent_id: str, key: str, value: str) -> list[DriveFile]: ...
-    def move(self, file_id: str, new_parent_id: str) -> None: ...
-    def rename(self, file_id: str, name: str) -> None: ...
-    def set_properties(self, file_id: str, props: Mapping[str, str]) -> None: ...
-    def download(self, file_id: str, dest: Path) -> None: ...
-    def upload(self, src: Path, parent_id: str, props: Mapping[str, str]) -> str: ...
-    def delete(self, file_id: str) -> None:
+    def list(self, folder: str, recursive: bool = False, hashes: bool = False) -> list[Entry]:
+        """Entries under folder, empty when it does not exist."""
+        ...
+
+    def mkdir(self, folder: str) -> None: ...
+    def move(self, src: str, dst: str) -> None: ...
+    def download(self, src: str, dest: Path) -> None: ...
+    def upload_tree(self, src: Path, dst: str) -> None: ...
+    def read_text(self, path: str) -> str | None: ...
+    def write_text(self, path: str, text: str) -> None: ...
+
+    def delete(self, path: str) -> None:
         """Permanent delete, skipping trash. Folders take their contents with them."""
         ...
 
-
-ROOT = "root"
-
-
-def ensure_folder(drive: Drive, name: str, parent_id: str) -> str:
-    return drive.find_folder(name, parent_id) or drive.create_folder(name, parent_id)
+    def dedupe(self, folder: str) -> None:
+        """Rename files that share a name in folder, which Drive allows and paths cannot address."""
+        ...
 
 
-@dataclass(frozen=True)
-class Folders:
-    root: str
-    inbox: str
-    processing: str
-    failed: str
-    sessions: str
+def ensure_layout(drive: Drive) -> None:
+    for folder in (INBOX, PROCESSING, FAILED, SESSIONS):
+        drive.mkdir(folder)
+
+
+@dataclass
+class State:
+    """Retry counts by checksum. Runs never overlap, so one file is enough."""
+
+    attempts: dict[str, int] = field(default_factory=dict)
 
     @classmethod
-    def resolve(cls, drive: Drive, root_name: str) -> "Folders":
-        root = ensure_folder(drive, root_name, ROOT)
-        return cls(
-            root,
-            *(ensure_folder(drive, n, root) for n in ("inbox", "processing", "failed", "sessions")),
-        )
+    def load(cls, drive: Drive) -> "State":
+        text = drive.read_text(STATE)
+        return cls(dict(json.loads(text).get("attempts", {}))) if text else cls()
+
+    def save(self, drive: Drive) -> None:
+        drive.write_text(STATE, json.dumps({"attempts": self.attempts}, indent=2, sort_keys=True))

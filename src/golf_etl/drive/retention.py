@@ -7,9 +7,10 @@ failed upload cannot push every session out.
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from pathlib import PurePosixPath
 
 from golf_etl.config import Settings
-from golf_etl.drive.client import Drive, DriveFile, Folders
+from golf_etl.drive.client import FAILED, MARKER, SESSIONS, Drive
 
 LEFTOVER_TTL = timedelta(days=1)
 
@@ -21,67 +22,67 @@ class SweepReport:
     bytes_after: int = 0
 
 
-def sweep(drive: Drive, folders: Folders, cfg: Settings, now: datetime) -> SweepReport:
+def sweep(drive: Drive, cfg: Settings, now: datetime) -> SweepReport:
     report = SweepReport()
 
-    def delete(f: DriveFile) -> None:
-        drive.delete(f.id)
-        report.deleted.append(f.name)
+    def delete(path: str) -> None:
+        drive.delete(path)
+        report.deleted.append(PurePosixPath(path).name)
 
-    for f in drive.list_children(folders.failed):
-        if now - f.created > timedelta(days=cfg.failed_ttl_days):
-            delete(f)
+    # Failed originals age from their error file: a video's own time is when it was shot.
+    failed = drive.list(FAILED)
+    errors = {e.name.removesuffix(".error.txt"): e for e in failed if e.name.endswith(".error.txt")}
+    for e in failed:
+        stamp = errors.get(e.name.removesuffix(".error.txt"), e).modified
+        if now - stamp > timedelta(days=cfg.failed_ttl_days):
+            delete(e.path)
 
-    tagged = drive.list_tagged()
-    sessions = sorted(
-        (
-            f
-            for f in tagged
-            if f.app_properties.get("kind") == "session" and folders.sessions in f.parents
-        ),
-        key=lambda f: f.created,
-    )
+    entries = drive.list(SESSIONS, recursive=True)
+    top = [e for e in entries if e.is_dir and "/" not in e.path[len(SESSIONS) + 1 :]]
+    names = {e.name for e in top}
+    published = {PurePosixPath(e.path).parent.name: e.modified for e in entries if e.name == MARKER}
     gone: set[str] = set()
-    names = {s.name for s in sessions}
-    for s in sessions:
+    for s in top:
         if s.name.startswith(".old-"):
-            # Left by a run that died mid-swap: drop it if the new session made it into
-            # place, otherwise it is still the only copy, so put it back.
+            # Left by a run that died mid-swap: drop it if the new session made it into place,
+            # otherwise it is still the only copy, so put it back.
             sid = s.name.removeprefix(".old-")
             if sid in names:
-                delete(s)
-                gone.add(s.id)
+                delete(s.path)
+                gone.add(s.name)
             else:
-                drive.rename(s.id, sid)
+                drive.move(s.path, f"{SESSIONS}/{sid}")
                 names.add(sid)
                 report.restored.append(sid)
+                gone.add(s.name)
             continue
-        leftover = s.name.startswith(".tmp-") and now - s.created > LEFTOVER_TTL
-        if leftover or now - s.created > timedelta(days=cfg.session_ttl_days):
-            delete(s)
-            gone.add(s.id)
-    sessions = [s for s in sessions if s.id not in gone]
+        age = now - published.get(s.name, s.modified)
+        leftover = s.name.startswith(".tmp-") and age > LEFTOVER_TTL
+        if leftover or age > timedelta(days=cfg.session_ttl_days):
+            delete(s.path)
+            gone.add(s.name)
 
-    for f in tagged:
-        if (
-            f.app_properties.get("kind") == "clip"
-            and f.app_properties.get("sessionFolder") not in gone
-            and now - f.created > timedelta(days=cfg.clip_ttl_days)
-        ):
-            delete(f)
-            gone.add(f.id)
+    def session_of(path: str) -> str:
+        return path[len(SESSIONS) + 1 :].split("/", 1)[0]
 
-    by_session: dict[str, int] = defaultdict(int)
-    for f in tagged:
-        if f.id not in gone and f.app_properties.get("sessionFolder") not in gone:
-            by_session[f.app_properties.get("sessionFolder", "")] += f.size
-    total = sum(by_session.values())
-    for s in sessions:
+    sizes: dict[str, int] = defaultdict(int)
+    for e in entries:
+        if e.is_dir or session_of(e.path) in gone:
+            continue
+        if e.name == "clip.mp4" and now - e.modified > timedelta(days=cfg.clip_ttl_days):
+            delete(e.path)
+            continue
+        sizes[session_of(e.path)] += e.size
+
+    total = sum(sizes.values())
+    live = sorted(
+        (s for s in top if s.name not in gone and not s.name.startswith(".")),
+        key=lambda s: published.get(s.name, s.modified),
+    )
+    for s in live:
         if total <= cfg.max_bytes:
             break
-        if s.name.startswith("."):
-            continue
-        delete(s)
-        total -= by_session.pop(s.id, 0)
+        delete(s.path)
+        total -= sizes.pop(s.name, 0)
     report.bytes_after = total
     return report

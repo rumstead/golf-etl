@@ -48,11 +48,17 @@ podman run --rm --user root -v "$PWD/local":/w:Z golf-etl eval /w/labels.yaml
 Thresholds are environment variables (`GOLF_ONSET_DELTA`, `GOLF_IMPACT_AUDIO_LAG_MS`, ...); see `src/golf_etl/config.py`.
 
 ## Drive credentials
-1. In a personal GCP project, enable the Google Drive API.
-2. Configure the OAuth consent screen (External) with the `.../auth/drive` scope and publish it to Production. Refresh tokens for apps left in Testing expire after 7 days.
-3. Create an OAuth client of type Desktop app and download `client_secret.json`.
-4. Mint a refresh token. The command prints a URL; open it, approve, and it prints the token.
-   ```sh
-   podman run --rm -it --network host --user root -v "$PWD":/work:Z golf-etl auth /work/client_secret.json
+The pipeline reaches Drive through rclone, which has its own verified Google app, so there is no Google Cloud setup.
+
+1. On any machine with rclone and a browser, run `rclone authorize "drive"`, approve, and copy the JSON token it prints.
+2. Put these in a `drive.env` (homelab keeps them in a SOPS secret). `--env-file` takes each line as is, so no quotes around the token:
    ```
-5. Put `client_id`, `client_secret`, and `refresh_token` in `golf-etl-drive.sops.yaml` in homelab.
+   RCLONE_CONFIG_GDRIVE_TYPE=drive
+   RCLONE_CONFIG_GDRIVE_SCOPE=drive
+   RCLONE_CONFIG_GDRIVE_TOKEN={"access_token":...,"refresh_token":...}
+   RCLONE_DRIVE_USE_TRASH=false
+   ```
+3. Run one poll by hand:
+   ```sh
+   podman run --rm --env-file drive.env -e GOLF_SCRATCH_DIR=/tmp/scratch golf-etl poll-drive
+   ```

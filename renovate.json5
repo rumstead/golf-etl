@@ -11,6 +11,16 @@
   prConcurrentLimit: 5,
   labels: ['dependencies'],
   enabledManagers: ['pip_requirements', 'dockerfile', 'github-actions'],
+  customManagers: [
+    {
+      // ARG RCLONE_VERSION=v1.75.1 in the Dockerfile
+      customType: 'regex',
+      managerFilePatterns: ['/^Dockerfile$/'],
+      matchStrings: ['ARG RCLONE_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)'],
+      depNameTemplate: 'rclone/rclone',
+      datasourceTemplate: 'github-releases',
+    },
+  ],
   packageRules: [
     {
       matchUpdateTypes: ['minor', 'patch', 'digest'],

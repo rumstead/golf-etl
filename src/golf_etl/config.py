@@ -31,7 +31,7 @@ class Settings:
     clip_long_edge: int = 1920
     clip_crf: int = 23
     # drive
-    root_folder: str = "golf"
+    remote: str = "gdrive:golf"  # rclone remote and folder; a local path works too
     max_attempts: int = 3
     failed_ttl_days: int = 3
     clip_ttl_days: int = 14
