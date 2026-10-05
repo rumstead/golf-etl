@@ -13,6 +13,13 @@ from pathlib import Path
 from golf_etl.drive.client import Entry
 
 BASE_FLAGS = ["--log-level", "ERROR", "--drive-use-trash=false"]
+NOT_FOUND = {3, 4}  # rclone exit codes: directory not found, file not found
+
+
+class RcloneError(RuntimeError):
+    def __init__(self, message: str, code: int):
+        super().__init__(message)
+        self.code = code
 
 
 def _parse_time(value: str) -> datetime:
@@ -35,7 +42,7 @@ class RcloneDrive:
         )
         if proc.returncode != 0:
             message = proc.stderr.decode(errors="replace").strip()
-            raise RuntimeError(f"rclone {args[0]} failed: {message}")
+            raise RcloneError(f"rclone {args[0]} failed: {message}", proc.returncode)
         return proc.stdout
 
     def list(self, folder: str, recursive: bool = False, hashes: bool = False) -> list[Entry]:
@@ -46,8 +53,8 @@ class RcloneDrive:
             args += ["--hash", "--hash-type", "sha256"]
         try:
             items = json.loads(self._run(*args))
-        except RuntimeError as exc:
-            if "directory not found" in str(exc):
+        except RcloneError as exc:
+            if exc.code in NOT_FOUND or "directory not found" in str(exc):
                 return []
             raise
         prefix = f"{folder}/" if folder else ""
@@ -78,8 +85,8 @@ class RcloneDrive:
     def read_text(self, path: str) -> str | None:
         try:
             return self._run("cat", self._path(path)).decode()
-        except RuntimeError as exc:
-            if "not found" in str(exc):
+        except RcloneError as exc:
+            if exc.code in NOT_FOUND or "not found" in str(exc):
                 return None
             raise
 

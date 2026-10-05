@@ -92,3 +92,14 @@ def test_mkdir_is_idempotent(drive, root):
 def test_failures_raise_with_rclone_stderr(drive):
     with pytest.raises(RuntimeError, match="rclone moveto failed"):
         drive.move("inbox/missing.MOV", "processing/missing.MOV")
+
+
+def test_missing_paths_are_detected_by_exit_code_not_message(tmp_path):
+    # Drive's rclone backend can report "not found" with exit code 3 or 4 and nothing on stderr.
+    stub = tmp_path / "rclone"
+    stub.write_text("#!/bin/sh\nexit 4\n")
+    stub.chmod(0o755)
+    quiet = RcloneDrive("gdrive:golf", rclone=str(stub))
+    assert quiet.read_text(".golf-etl/state.json") is None
+    stub.write_text("#!/bin/sh\nexit 3\n")
+    assert quiet.list("inbox") == []
