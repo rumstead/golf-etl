@@ -13,6 +13,8 @@ ADD https://downloads.rclone.org/${GOLF_RCLONE_VERSION}/rclone-${GOLF_RCLONE_VER
 RUN python -m zipfile -e /tmp/rclone.zip /tmp/rclone \
     && install -m 755 /tmp/rclone/rclone-${GOLF_RCLONE_VERSION}-linux-amd64/rclone /usr/local/bin/rclone \
     && rm -rf /tmp/rclone /tmp/rclone.zip
+# BuildKit applies ADD --chmod to directories it creates too, so make the directory first
+RUN mkdir -m 755 -p /opt/golf-etl
 ADD --chmod=644 https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_lite/float16/1/pose_landmarker_lite.task /opt/golf-etl/pose_landmarker_lite.task
 COPY pyproject.toml .
 COPY src ./src
@@ -30,5 +32,7 @@ ARG GOLF_ETL_VERSION=dev
 ENV GOLF_ETL_VERSION=$GOLF_ETL_VERSION HOME=/tmp
 RUN useradd --uid 10001 --no-create-home golf && mkdir /scratch && chown golf /scratch
 USER 10001
+# the pipeline runs as this user; fail the build if it cannot read the pose model
+RUN test -r /opt/golf-etl/pose_landmarker_lite.task
 ENTRYPOINT ["golf-etl"]
 CMD ["poll-drive"]
