@@ -1,6 +1,6 @@
 import hashlib
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
@@ -337,3 +337,74 @@ def test_failing_to_save_the_published_status_does_not_retry_the_video(env):
     assert store.names_in("inbox") == []
     assert attempts(store, b"aaa") == 0
     assert State.load(store).recent[0]["status"] == "processing"
+
+
+def test_recent_items_have_the_keys_the_upload_page_reads(env):
+    store, process, run = env
+    store.add_video("ok.mov", data=b"ok")
+    store.add_video("bad.mov", data=b"bad")
+    process.fail_on.add("bad.mov")
+    run()
+    items = {i["name"]: i for i in State.load(store).recent}
+    assert set(items["ok.mov"]) == {"sha256", "name", "status", "updated", "session"}
+    assert items["ok.mov"]["status"] == "published"
+    assert set(items["bad.mov"]) == {"sha256", "name", "status", "updated", "error"}
+    assert items["bad.mov"]["status"] == "retrying"
+    run()
+    run()
+    failed = {i["name"]: i for i in State.load(store).recent}["bad.mov"]
+    assert failed["status"] == "failed"
+    assert set(failed) == {"sha256", "name", "status", "updated", "error"}
+    assert items["ok.mov"]["sha256"] == hashlib.sha256(b"ok").hexdigest()
+    for item in (items["ok.mov"], failed):
+        assert datetime.fromisoformat(item["updated"]).utcoffset() == timedelta(0)
+
+
+def test_a_retried_then_published_video_has_one_item_at_the_front(env):
+    store, process, run = env
+    store.add_video("a.mov", data=b"aaa")
+    process.fail_on.add("a.mov")
+    run()
+    assert [i["status"] for i in State.load(store).recent] == ["retrying"]
+    process.fail_on.clear()
+    store.add_video("b.mov", data=b"bbb")
+    run()
+    run()
+    store.add_video("a.mov", data=b"aaa")
+    process.fail_on.add("a.mov")
+    run()
+    process.fail_on.clear()
+    run()
+    recent = State.load(store).recent
+    sha = hashlib.sha256(b"aaa").hexdigest()
+    assert [i["status"] for i in recent if i["sha256"] == sha] == ["published"]
+    assert len(recent) == 2
+
+
+def test_the_fifty_cap_keeps_the_newest(env):
+    store, process, run = env
+    for i in range(55):
+        store.add_video(f"v{i}.mov", data=f"v{i}".encode())
+    run()
+    before = State.load(store).recent
+    store.add_video("late.mov", data=b"late")
+    run()
+    after = State.load(store).recent
+    assert len(after) == 50
+    assert after[0]["name"] == "late.mov"
+    assert after[1:] == before[:49]
+
+
+def test_a_video_shows_as_processing_while_it_is_processed(env, monkeypatch):
+    store, process, run = env
+    store.add_video("a.mov", data=b"aaa")
+    seen = []
+    real_call = FakeProcess.__call__
+
+    def spy(self, *args, **kwargs):
+        seen.append([(i["name"], i["status"]) for i in State.load(store).recent])
+        return real_call(self, *args, **kwargs)
+
+    monkeypatch.setattr(FakeProcess, "__call__", spy)
+    run()
+    assert seen == [[("a.mov", "processing")]]
