@@ -54,6 +54,10 @@ class Settings:
     session_ttl_days: int = 60
     max_bytes: int = 3 * 1024**3
     scratch_dir: str = "/scratch"
+    # the upload page: tusd writes to upload_dir, on the same volume as the inbox
+    upload_dir: str = "/data/uploads"
+    upload_ttl_hours: int = 24  # unfinished uploads are deleted after this
+    upload_port: int = 8090
 
     @classmethod
     def from_env(cls, env: Mapping[str, str] | None = None) -> "Settings":

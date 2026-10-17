@@ -5,6 +5,8 @@ Put a swing video in `inbox/` under `GOLF_INBOX_ROOT` (`/data` by default). A fe
 
 How it works is in [docs/design.md](docs/design.md). It runs as a CronJob in [rumstead/homelab](https://github.com/rumstead/homelab) (`kubernetes/manifests/golf-etl`).
 
+From the phone, videos go up through the upload page that `golf-etl upload-server` serves behind nginx and tusd in the same cluster. Uploads resume after a dropped connection, and only finished ones land in `inbox/`.
+
 ## Settings
 Every setting in `src/golf_etl/config.py` can be overridden with `GOLF_<NAME>`.
 

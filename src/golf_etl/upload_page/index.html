@@ -1,0 +1,117 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Golf upload</title>
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, sans-serif; line-height: 1.4; }
+  body { margin: 0 auto; max-width: 40rem; padding: 16px; }
+  h1 { font-size: 1.4rem; margin: 0 0 12px; }
+  h2 { font-size: 1.1rem; margin: 24px 0 8px; }
+  label.pick { display: block; padding: 16px; border: 2px dashed currentColor; border-radius: 8px;
+    text-align: center; font-weight: 600; }
+  label.pick input { display: block; margin: 12px auto 0; max-width: 100%; }
+  .note { font-size: 0.9rem; opacity: 0.8; }
+  ul { list-style: none; margin: 0; padding: 0; }
+  li { padding: 8px 0; border-bottom: 1px solid rgba(128, 128, 128, 0.3); overflow-wrap: anywhere; }
+  li span { display: block; font-size: 0.9rem; opacity: 0.8; }
+  progress { width: 100%; height: 12px; }
+</style>
+</head>
+<body>
+<h1>Golf upload</h1>
+<label class="pick">Choose swing videos
+  <input id="pick" type="file" accept="video/*" multiple>
+</label>
+<p class="note">Keep this page open until each video says done. If the phone shows "Compressing"
+  or an upload fails, keep the original: save the video to Files, then pick it with Browse.</p>
+<ul id="files"></ul>
+<h2>Status</h2>
+<ul id="status"></ul>
+<script src="https://cdn.jsdelivr.net/npm/tus-js-client@4.3.1/dist/tus.min.js"
+  integrity="sha384-UlHjK3F7TCQCEUpnoa1ohMbP2oaWB3Aypv4gMo511vaZ86uUZ0Zv7UzZ0J1zRUT1"
+  crossorigin="anonymous"></script>
+<script>
+  function row(list, title, detail) {
+    const li = document.createElement("li");
+    li.textContent = title;
+    const span = document.createElement("span");
+    span.textContent = detail;
+    li.append(span);
+    list.append(li);
+    return span;
+  }
+
+  // one upload at a time, so the first video finishes as soon as it can
+  let queue = Promise.resolve();
+
+  function send(file) {
+    const span = row(document.getElementById("files"), file.name, "queued");
+    const bar = document.createElement("progress");
+    bar.max = 100;
+    bar.value = 0;
+    span.before(bar);
+    queue = queue.then(() => new Promise((resolve) => {
+      const upload = new tus.Upload(file, {
+        endpoint: "/files/",
+        chunkSize: 50 * 1024 * 1024,
+        retryDelays: [0, 3000, 10000, 30000, 60000],
+        metadata: { filename: file.name, filetype: file.type },
+        removeFingerprintOnSuccess: true,
+        onProgress(sent, total) {
+          bar.value = Math.floor((sent / total) * 100);
+          span.textContent = bar.value + "%";
+        },
+        onSuccess() {
+          bar.value = 100;
+          span.textContent = "done";
+          resolve();
+        },
+        onError(err) {
+          span.textContent = "failed, pick it again to resume: " + err.message;
+          resolve();
+        },
+      });
+      upload.findPreviousUploads().catch(() => []).then((previous) => {
+        if (previous.length) upload.resumeFromPreviousUpload(previous[0]);
+        upload.start();
+      });
+    }));
+  }
+
+  document.getElementById("pick").addEventListener("change", (event) => {
+    for (const file of event.target.files) send(file);
+    event.target.value = "";
+  });
+
+  function describe(item) {
+    if (item.status === "published") return "published " + item.session;
+    if (item.status === "failed" || item.status === "retrying") {
+      return item.status + ": " + (item.error || "");
+    }
+    return item.status;
+  }
+
+  async function poll() {
+    try {
+      const res = await fetch("/status", { cache: "no-store" });
+      const data = await res.json();
+      const list = document.getElementById("status");
+      list.replaceChildren();
+      for (const u of data.uploading) {
+        const pct = u.size ? Math.floor((u.offset / u.size) * 100) : 0;
+        row(list, u.name, "uploading " + pct + "%");
+      }
+      for (const w of data.waiting) row(list, w.name, "waiting");
+      for (const r of data.recent) row(list, r.name, describe(r));
+      if (!list.children.length) row(list, "Nothing yet", "");
+    } catch (err) {
+      // keep the last list until the next poll
+    }
+  }
+  poll();
+  setInterval(poll, 10000);
+</script>
+</body>
+</html>

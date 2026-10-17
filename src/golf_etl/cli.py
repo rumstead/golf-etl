@@ -23,6 +23,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("poll", aliases=["poll-drive"], help="process everything in the inbox once")
     m = sub.add_parser("migrate-drive", help="move the Drive sessions to the GitHub repo")
     m.add_argument("--dry-run", action="store_true", help="print what it would copy and delete")
+    sub.add_parser("upload-server", help="serve the upload page, its status, and tusd's hooks")
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = Settings.from_env()
@@ -32,6 +33,7 @@ def main(argv: list[str] | None = None) -> int:
         "poll": cmd_poll,
         "poll-drive": cmd_poll,
         "migrate-drive": cmd_migrate,
+        "upload-server": cmd_upload_server,
     }
     return commands[args.command](args, cfg)
 
@@ -146,6 +148,13 @@ def cmd_migrate(args, cfg: Settings) -> int:
     counts = f"{len(report.copied)} copied, {len(report.deleted)} deleted, {len(report.kept)} kept"
     print(f"dry run: {counts}" if args.dry_run else counts)
     return 1 if report.kept else 0
+
+
+def cmd_upload_server(args, cfg: Settings) -> int:
+    from golf_etl.upload import serve
+
+    serve(cfg)
+    return 0
 
 
 if __name__ == "__main__":

@@ -47,6 +47,13 @@ claude.ai: + > Add from GitHub > golf-sessions, "review my latest golf session"
 - **The inbox is read through the `rclone` binary pointed at a local path**, the same code that reads a Drive remote, so both modes share one `Store` interface (list, move, download, delete, state file). Sessions go through a separate `Publisher` interface: `GitHubPublisher` or, in drive mode, `DrivePublisher`.
 - **Sessions go to GitHub over SSH with a deploy key** that has write access to `golf-sessions` only and does not expire. The key is read from `GOLF_SSH_KEY_PATH` (default `/etc/golf-etl/ssh/id_ed25519`). GitHub's host keys are pinned in the package (`github_known_hosts`) and checked strictly, so there is no first-use trust. The repo is `GOLF_SESSIONS_REPO` (default `git@github.com:rumstead/golf-sessions.git`); a `file://` URL needs no key.
 
+### Upload page
+- **The phone uploads through a page in the cluster**: nginx in front, tusd for the resumable tus protocol, and `golf-etl upload-server` for the page, a `/status` JSON, and tusd's HTTP hooks. The pod, volume, and tailnet ingress live in homelab.
+- **tusd writes to `GOLF_UPLOAD_DIR`** (default `/data/uploads`), on the same volume as the inbox. The `pre-create` hook rejects anything that is not a video. The `post-finish` hook moves the finished file into `inbox/` under its original name, with `-2`, `-3` before the suffix when the name is taken, so `inbox/` only holds complete videos.
+- **A sweep every 10 minutes** moves complete uploads whose hook never arrived and deletes unfinished ones untouched for 24 hours (`GOLF_UPLOAD_TTL_HOURS`). Uploads tusd holds a lock on are left alone.
+- `upload-server` listens on `127.0.0.1` only, port 8090 (`GOLF_UPLOAD_PORT`), so nginx and tusd are its only clients.
+- The page sends each video in 50MB chunks with tus-js-client, one at a time, and resumes an interrupted upload when the same file is picked again. It lists `/status` every 10 seconds: uploads in progress, videos waiting in `inbox/`, and the recent results from `state.json`.
+
 ### Layout
 Inbox, under `GOLF_INBOX_ROOT`:
 ```
@@ -173,6 +180,7 @@ Whatever schedules `golf-etl poll` must guarantee:
   - `golf-etl process <video> --out <dir>`: local run, no inbox or GitHub
   - `golf-etl eval <labels.yaml>`: detection precision, recall, and timing error against hand-labeled impact timestamps
   - `golf-etl poll`: the scheduled entrypoint (alias `poll-drive`)
+  - `golf-etl upload-server`: the upload page, its status, and tusd's hooks
   - `golf-etl migrate-drive [--dry-run]`: one-time move of the sessions in Drive to `golf-sessions`. It exits with status 2 without both the Drive token and the deploy key, and refuses (status 1, listing the entries) while anything is in the Drive `inbox/`, `processing/`, or `failed/`. Each session is copied without `clip.mp4`, `-small.jpg` copies, or `session.zip`, keeping its layout, then deleted from Drive only if the pushed commit has every file at the same size. A session with no marker is kept on Drive. The exit status is 1 when any session was kept
 - Tests:
   - onset detection against synthetic audio (clicks plus noise)
