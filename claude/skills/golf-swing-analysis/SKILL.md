@@ -1,11 +1,11 @@
 ---
 name: golf-swing-analysis
-description: Analyze golf swings from uploaded videos or from golf-etl sessions in Google Drive. Use this skill whenever the user uploads a golf swing video (.mov, .mp4, or similar) and asks for coaching feedback, swing analysis, what they're doing wrong, how to improve, or any question about their golf swing mechanics. Also use it whenever the user asks to review a golf session, their latest or recent swings, today's range session, or a folder under golf/sessions in Google Drive, even if they don't say golf-etl. Also trigger when the user says they're at the range and wants swing feedback, or when they share multiple swing videos for comparison. Get the frames (from the session folder or by extracting them from the video), identify the camera angle, ask for ball flight context before diagnosing, and deliver structured coaching feedback with prioritized next steps.
+description: Analyze golf swings from uploaded videos or from golf-etl sessions in the golf-sessions GitHub repo (or Google Drive). Use this skill whenever the user uploads a golf swing video (.mov, .mp4, or similar) and asks for coaching feedback, swing analysis, what they're doing wrong, how to improve, or any question about their golf swing mechanics. Also use it whenever the user asks to review a golf session, their latest or recent swings, today's range session, or a folder under sessions in the golf-sessions repo, even if they don't say golf-etl. Also trigger when the user says they're at the range and wants swing feedback, or when they share multiple swing videos for comparison. Get the frames (from the session folder or by extracting them from the video), identify the camera angle, ask for ball flight context before diagnosing, and deliver structured coaching feedback with prioritized next steps.
 ---
 
 # Golf Swing Analysis Skill
 
-A structured coaching workflow for analyzing golf swings from any camera angle, with calibrated confidence and prioritized feedback. Frames come either from a golf-etl session in Google Drive or from a video the user uploads.
+A structured coaching workflow for analyzing golf swings from any camera angle, with calibrated confidence and prioritized feedback. Frames come either from a golf-etl session in the golf-sessions GitHub repo (or Google Drive) or from a video the user uploads.
 
 ---
 
@@ -23,11 +23,31 @@ A structured coaching workflow for analyzing golf swings from any camera angle, 
 
 ## Step 1: Get the Frames
 
-There are two sources. Use 1A when the user mentions a session, their latest or recent swings, or Google Drive. Use 1B when they upload a video.
+There are three sources. Use 1A when the user mentions a session or their latest or recent swings. Use 1B only when they say the sessions are in Google Drive. Use 1C when they upload a video.
 
-### 1A: From a golf-etl session in Google Drive
+### 1A: From the golf-sessions GitHub repo
 
-golf-etl turns each uploaded range video into a session folder in Google Drive with frames already picked, labeled, and in order.
+golf-etl turns each range video into a session folder in the private `rumstead/golf-sessions` repo with frames already picked, labeled, and in order.
+
+1. **Find the session.** If the repo is not in the chat, ask the owner to add it with **+ > Add from GitHub > golf-sessions**, then browse it. List `sessions/`. Folder names start with the capture date and time (`YYYY-MM-DD-HHMM-<id>`), so the newest name is the latest session. Use the session the user names if they name one.
+2. **Read `session.md` first.** It lists the swings with their impact times, a Ball flight table, a Timing table, sounds that were rejected as not being a swing, and how to read the files. Its `Source:` line names the original video.
+3. **Open the full-size images.** Each swing has `06-sequence.jpg`, `05-impact-zoom.jpg`, and `07-after-shot.jpg`; there are no `-small` copies and no clips. Older sessions moved over from Drive keep their old file set: they may have `01-address.jpg` to `04-finish.jpg` instead of the sequence sheet, may lack `pose.csv` and the Timing table, and their `session.md` may mention a `clip.mp4` that does not exist. Use what is there.
+4. **Choose the swings.** Leave out any swing whose ball flight track says `lost: no ball launched`; it is a practice swing or not a swing. Then take all of them if there are 5 or fewer. Otherwise use the Ball flight grades to pick: the best and worst graded swings plus a few in between, so the read compares good and bad strikes. Without grades, take 5 spread across the session (the first, the last, and evenly in between). The user's choice of swings always wins.
+5. **For each chosen swing, view `swing-NN/06-sequence.jpg` first.** It is the whole swing in one image, read left to right, top row then bottom row: address, takeaway, halfway back, top, transition, impact, follow-through, finish. Takeaway is the hands reaching hip height and halfway back the hands reaching shoulder height, so those panels are the same body position on every swing. Each panel is labeled with the position and its time in the video.
+6. **Then view `swing-NN/05-impact-zoom.jpg`.** It is the ball area for the frames just before, at, and just after impact, top to bottom. Use it for contact, shaft lean, and strike location.
+7. **If there is a simulator or launch monitor screen, read `swing-NN/07-after-shot.jpg`.** It is taken a few seconds after impact, when the screen shows this shot's numbers. Read what is clearly legible: club path, face to path, face to target, club speed, ball speed, smash factor, launch (VLA/HLA), spin (back, side, total), carry, offline, peak height. Only report digits you can actually read; if part of the panel is hidden behind the golfer or blurred, say which numbers you could not read rather than guessing. **Never read numbers from the address, impact, or sequence frames: the screen still shows the previous shot there.**
+8. **Use the numbers in `session.md` and the swing folder instead of estimating from pictures.**
+   - Ball flight table: `Grade` (good, fair, poor) compares how fast the ball left the club to the session median, so it is strike quality, not distance. `Start dir` is negative left of the camera line, positive right. Speeds only compare within one session.
+   - Timing table: backswing time, downswing time, and tempo (backswing over downswing) per swing. Compare tempo across swings in the session (does it change on the poor grades?) rather than against a fixed ratio. A blank row means the hands left the frame at the top.
+   - `swing-NN/pose.csv`: joint positions per sample, as fractions of the frame from the top left. Frame numbers count from 2.5s before impact. Use it to measure head movement, hip and hand height, and sway between positions when a call depends on it.
+9. **Trust the photo over the skeleton.** The green lines are a pose estimate and can be wrong, especially for hands and arms crossing the body.
+10. **Look across swings.** Swings in one session are usually the same club and setup. Base the read on what repeats, and point at a single swing (by its folder name, like `swing-03`) only when it differs.
+
+Then continue with Step 2. Do not run ffmpeg for a session; the frames are already chosen.
+
+### 1B: From Google Drive
+
+Only when the sessions are still in Google Drive (the owner runs golf-etl in drive mode). golf-etl puts each session in a folder under `golf/sessions` with frames already picked, labeled, and in order.
 
 1. **Find the session.** Search Google Drive for the folders under `golf/sessions`. Folder names start with the capture date and time (`YYYY-MM-DD-HHMM-<id>`), so the newest name is the latest session. Use the session the user names if they name one.
 2. **Read `session.md` first.** It lists the swings with their impact times, a Ball flight table, a Timing table, sounds that were rejected as not being a swing, and how to read the files.
@@ -45,7 +65,7 @@ golf-etl turns each uploaded range video into a session folder in Google Drive w
 
 Then continue with Step 2. Do not run ffmpeg for a session; the frames are already chosen.
 
-### 1B: From an uploaded video
+### 1C: From an uploaded video
 
 Use ffmpeg to extract frames at 8fps from each uploaded video. Scale to 960x540 for speed.
 
@@ -208,6 +228,7 @@ Calibrate feedback to the player's level:
 ## Output Tone
 
 - Direct, practical, no fluff
+- Whenever you name a swing from a session, also give its source video and the time to scrub to in Photos, from that swing's Impact time in `session.md`, for example "`swing-07`, scrub to 12:07 in `IMG_4601`". The owner checks your read against the original video that way; there are no clips
 - One coach talking to one golfer, not a written report
 - No bullet point overload; use prose where it flows better
 - End with a clear "here's what to do at the range today" statement

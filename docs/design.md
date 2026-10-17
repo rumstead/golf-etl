@@ -238,7 +238,7 @@ Each swing's ball flight is graded against the session in `session.md`, so a rev
 - **Status**: `state.json` has each recent upload's latest status; nothing about failures is pushed to `golf-sessions`.
 
 ## Coaching skill
-`claude/skills/golf-swing-analysis/SKILL.md` is the owner's claude.ai skill. It triggers on requests like "review my latest golf session", finds the newest session folder (names sort by capture time), reads `session.md`, skips swings with no ball launched, picks up to 5 swings by ball flight grade (or spread across the session without grades) unless told otherwise, views each swing's sequence sheet and impact zoom, reads simulator or launch monitor numbers from `07-after-shot` when a screen is in view (and never from earlier frames, which show the previous shot), uses the Timing table and `pose.csv` for measurements, asks about ball flight shape once per session when there are no numbers, and then runs the existing coaching steps. The copy in this repo currently reads the Drive layout and the `-small.jpg` images. It is uploaded to claude.ai by hand; claude.ai's copy is the one that runs.
+`claude/skills/golf-swing-analysis/SKILL.md` is the owner's claude.ai skill. It triggers on requests like "review my latest golf session", finds the newest session folder in the `golf-sessions` repo (names sort by capture time), reads `session.md`, skips swings with no ball launched, picks up to 5 swings by ball flight grade (or spread across the session without grades) unless told otherwise, views each swing's sequence sheet and impact zoom, reads simulator or launch monitor numbers from `07-after-shot` when a screen is in view (and never from earlier frames, which show the previous shot), uses the Timing table and `pose.csv` for measurements, asks about ball flight shape once per session when there are no numbers, and names the source video and the Photos scrub time for every swing it mentions, and then runs the existing coaching steps. It is uploaded to claude.ai by hand; claude.ai's copy is the one that runs.
 
 ## Risks / Trade-offs
 - `latest` with `Always` means a bad push breaks the next run → failures are retried and land in `failed/`, and the original is kept for 3 days.
@@ -249,7 +249,6 @@ Each swing's ball flight is graded against the session in `session.md`, so a rev
 
 ## Follow-ups
 - The upload page that fills the inbox
-- The coaching skill reading `golf-sessions` and giving scrub times
 - Strike photos: impact tape or foot spray photos in the inbox, attached to the session recorded just before them
 - Notification when a session is ready
 - Claude API analysis and an MCP server for sessions
