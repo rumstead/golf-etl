@@ -4,7 +4,7 @@ import pytest
 from golf_etl.audio import Onset
 from golf_etl.config import Settings
 from golf_etl.detect import confirm, detect_swings
-from golf_etl.pose import LEFT_ANKLE, RIGHT_ANKLE
+from golf_etl.pose import LEFT_ANKLE, LEFT_WRIST, RIGHT_ANKLE, RIGHT_WRIST
 from tests.poses import (
     empty_track,
     fast_finish_track,
@@ -63,6 +63,16 @@ def test_rejects_a_fast_waggle_with_the_hands_low():
     check = confirm(waggle_track(10.0, hand_y=0.75), 10.0, CFG)
     assert check.offset_ms is None
     assert check.reason.startswith("hands below the hips")
+
+
+def test_rejects_fast_hands_that_start_well_after_the_sound():
+    # walking off with the club, or a waggle, a quarter second after a tap
+    track = still_track(10.0)
+    late = track.times > 10.2
+    rise = 0.6 - 2.0 * (track.times[late] - 10.2)
+    track.landmarks[late, LEFT_WRIST, 1] = rise
+    track.landmarks[late, RIGHT_WRIST, 1] = rise
+    assert confirm(track, 10.0, CFG).reason.startswith("hands too slow")
 
 
 def test_rejects_when_the_feet_are_out_of_frame():

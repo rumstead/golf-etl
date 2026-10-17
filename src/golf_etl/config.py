@@ -13,7 +13,7 @@ class Settings:
     onset_delta: float = 0.2
     onset_min_gap_s: float = 8.0
     impact_audio_lag_ms: float = 12.0
-    confirm_window_ms: int = 300
+    confirm_window_ms: int = 200
     confirm_min_speed: float = 4.0  # leg lengths (hip to ankle height) per second
     # at the sound the hands are about level with the hips: higher is the top or the finish,
     # lower is a waggle at address. In leg lengths below the hips.
