@@ -14,7 +14,11 @@ class Settings:
     onset_min_gap_s: float = 8.0
     impact_audio_lag_ms: float = 12.0
     confirm_window_ms: int = 300
-    confirm_min_speed: float = 1.0
+    confirm_min_speed: float = 4.0  # leg lengths (hip to ankle height) per second
+    # at the sound the hands are about level with the hips: higher is the top or the finish,
+    # lower is a waggle at address. In leg lengths below the hips.
+    confirm_hands_min: float = -0.15
+    confirm_hands_max: float = 0.25
     short_clip_s: float = 15.0
     pose_long_edge: int = 640
     pose_max_fps: float = 60.0

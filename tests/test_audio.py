@@ -29,8 +29,8 @@ def add_thump(y: np.ndarray, at_s: float, amp: float) -> None:
 
 
 def detect(y, **kw):
-    args = {"highpass_hz": 2000.0, "delta": 0.2, "min_gap_s": 8.0, "lag_s": 0.0} | kw
-    return find_onsets(y, SR, **args).kept
+    args = {"highpass_hz": 2000.0, "delta": 0.2, "lag_s": 0.0} | kw
+    return find_onsets(y, SR, **args)
 
 
 def test_finds_each_impact():
@@ -41,14 +41,21 @@ def test_finds_each_impact():
     assert times == pytest.approx([5.0, 15.0, 25.0], abs=0.03)
 
 
-def test_weaker_onset_within_min_gap_is_dropped():
+def test_weaker_sound_seconds_after_a_louder_one_is_kept():
+    # a club tap after the strike; picking between them needs the pose
     y = track(30)
     add_click(y, 10.0, 0.8)
     add_click(y, 13.0, 0.3, seed=2)
-    result = find_onsets(y, SR, highpass_hz=2000.0, delta=0.2, min_gap_s=8.0)
-    assert [o.time_s for o in result.kept] == pytest.approx([10.0], abs=0.03)
-    assert result.kept[0].strength == pytest.approx(1.0)
-    assert [o.time_s for o in result.suppressed] == pytest.approx([13.0], abs=0.03)
+    onsets = detect(y)
+    assert [o.time_s for o in onsets] == pytest.approx([10.0, 13.0], abs=0.03)
+    assert onsets[0].strength == pytest.approx(1.0)
+
+
+def test_echo_right_after_a_sound_is_merged_into_it():
+    y = track(30)
+    add_click(y, 10.0, 0.8)
+    add_click(y, 10.1, 0.4, seed=2)
+    assert [o.time_s for o in detect(y)] == pytest.approx([10.0], abs=0.03)
 
 
 def test_low_frequency_thump_is_ignored():
@@ -99,8 +106,7 @@ def test_chunk_boundaries_do_not_move_or_drop_onsets():
     y = track(40)
     for i, at in enumerate((4.0, 13.0, 19.9, 31.0)):  # 19.9 sits just before a 10s boundary
         add_click(y, at, 0.8 - 0.1 * i, seed=i + 20)
-    args = {"highpass_hz": 2000.0, "delta": 0.2, "min_gap_s": 5.0}
-    whole = find_onsets(y, SR, chunk_s=120.0, **args).kept
-    chunked = find_onsets(y, SR, chunk_s=10.0, **args).kept
+    whole = detect(y, chunk_s=120.0)
+    chunked = detect(y, chunk_s=10.0)
     assert [o.time_s for o in chunked] == pytest.approx([o.time_s for o in whole], abs=0.003)
     assert [o.strength for o in chunked] == pytest.approx([o.strength for o in whole], abs=0.05)

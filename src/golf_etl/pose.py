@@ -8,6 +8,7 @@ import numpy as np
 from mediapipe.tasks.python import BaseOptions, vision
 
 LEFT_WRIST, RIGHT_WRIST = 15, 16
+LEFT_HIP, RIGHT_HIP = 23, 24
 LEFT_ANKLE, RIGHT_ANKLE = 27, 28
 NUM_LANDMARKS = 33
 
@@ -41,6 +42,21 @@ class PoseTrack:
     def hand_height(self) -> np.ndarray:
         """(n,) hand height, larger is higher (image y grows downward)."""
         return -self.hands()[:, 1]
+
+    def hands_below_hips(self) -> np.ndarray:
+        """(n,) how far the hands sit below the hips, in frame heights; negative is above."""
+        hips = (self.landmarks[:, LEFT_HIP, 1] + self.landmarks[:, RIGHT_HIP, 1]) / 2
+        return self.hands()[:, 1] - hips
+
+    def leg_length(self) -> float:
+        """Median hip to ankle height in frame heights, NaN when the legs are never seen. It
+        scales with how big the golfer is in frame, so speeds divided by it do not depend on
+        where the phone is."""
+        y = self.landmarks[:, :, 1]
+        legs = (y[:, LEFT_ANKLE] + y[:, RIGHT_ANKLE]) / 2 - (y[:, LEFT_HIP] + y[:, RIGHT_HIP]) / 2
+        if np.all(np.isnan(legs)):
+            return float("nan")
+        return float(np.nanmedian(legs))
 
 
 class PoseEstimator:

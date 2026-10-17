@@ -8,7 +8,7 @@ from pathlib import Path
 import numpy as np
 
 from golf_etl import render
-from golf_etl.audio import SAMPLE_RATE, Onsets, find_onsets
+from golf_etl.audio import SAMPLE_RATE, Onset, find_onsets
 from golf_etl.config import Settings
 from golf_etl.detect import Detection, Rejected, Swing, detect_swings
 from golf_etl.frames import after_shot_time, pick_positions, sharpest
@@ -28,7 +28,7 @@ class SessionResult:
 
 
 def detect_video(video: Path, info: VideoInfo, cfg: Settings) -> Detection:
-    onsets = Onsets([], [])
+    onsets: list[Onset] = []
     if info.has_audio:
         samples = read_audio(video, info, SAMPLE_RATE)
         onsets = find_onsets(
@@ -36,23 +36,15 @@ def detect_video(video: Path, info: VideoInfo, cfg: Settings) -> Detection:
             SAMPLE_RATE,
             cfg.onset_highpass_hz,
             cfg.onset_delta,
-            cfg.onset_min_gap_s,
             cfg.impact_audio_lag_ms / 1000,
         )
     estimator = PoseEstimator(cfg.pose_model_path)
 
-    def track_for(t: float):
-        frames = read_frames(
-            video,
-            info,
-            t - cfg.pre_impact_s,
-            t + cfg.post_impact_s,
-            cfg.pose_long_edge,
-            cfg.pose_max_fps,
-        )
+    def track_for(start_s: float, end_s: float):
+        frames = read_frames(video, info, start_s, end_s, cfg.pose_long_edge, cfg.pose_max_fps)
         return estimator.track(frames)
 
-    return detect_swings(onsets.kept, track_for, info.duration_s, cfg, onsets.suppressed)
+    return detect_swings(onsets, track_for, info.duration_s, cfg)
 
 
 def process_video(
