@@ -79,7 +79,7 @@ A small web page on the tailnet, reached from Safari on the iPhone with the Tail
 - Pick one or more videos, see per-file progress, and see when each is done.
 - Resumable, chunked uploads. Reopening the page after a dropped connection or after Safari was backgrounded continues from where it stopped.
 - A video only appears in the inbox once it is complete.
-- The page must deliver the original file byte for byte, with its original name (for example `IMG_4601.MOV`). iOS hands the page a re-encoded copy when a video is picked from Photos, so the owner saves the video to Files first and picks it from Files on the page; checked with a real upload, which arrived byte for byte. Which route works is checked on the iPhone with a real video before the rest of the upload work is built.
+- The page must deliver the original file byte for byte, with its original name (for example `IMG_4601.MOV`). iOS hands the page a re-encoded copy when a video is picked from Photos, so the owner saves the video to Files first and picks it from Files on the page; checked with a real upload, which arrived byte for byte.
 - Served through the Tailscale Kubernetes operator as a tagged device, with HTTPS on the `ts.net` name. Tailnet membership is the only access control.
 
 ### Tailscale in the homelab
