@@ -1,7 +1,8 @@
 """Store implemented with the rclone binary.
 
-The remote comes from rclone's environment config (RCLONE_CONFIG_GDRIVE_*), so the root is
-something like "gdrive:golf". Tests point it at a local folder instead.
+The root is either the Drive remote, which comes from rclone's environment config
+(RCLONE_CONFIG_GDRIVE_*) and looks like "gdrive:golf", or a local folder such as the inbox root
+in github mode.
 """
 
 import json

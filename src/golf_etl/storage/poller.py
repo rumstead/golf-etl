@@ -1,4 +1,4 @@
-"""One poll of the Drive inbox: recover, dedupe, claim, process, publish, clean up."""
+"""One poll of the inbox: recover, dedupe, claim, process, publish, clean up."""
 
 import logging
 import shutil

@@ -125,7 +125,7 @@ A one-time command:
 
 These were not discussed in detail; the owner can override any of them.
 
-- **Image size.** Full-size images keep today's settings (2560 long edge, quality 90), because at sizes that would cap a session at about 30MB the launch monitor numbers on `07-after-shot.jpg` stop being reliably readable. A 1080p range session is about 0.93MB per swing on GitHub, a detailed simulator session about 2.4MB per swing (about 75MB for 30 swings), so GitHub's 10GB recommendation holds roughly 130 of the largest sessions. The `-small.jpg` copies are not needed in `github` mode.
+- **Image size.** Full-size images keep today's settings (2560 long edge, quality 90), because at sizes that would cap a session at about 30MB the launch monitor numbers on `07-after-shot.jpg` stop being reliably readable. A 1080p range session is about 0.93MB per swing on GitHub, a detailed simulator session about 2.4MB per swing (about 72MB for 30 swings), so GitHub's 10GB recommendation holds roughly 130 of the largest sessions. The `-small.jpg` copies are not needed in `github` mode.
 - **GitHub credential.** A deploy key with write access to `golf-sessions` only, stored as a SOPS secret in the homelab. Deploy keys do not expire.
 - **Tailscale.** The operator authenticates with a Tailscale OAuth client, which does not expire like a node key. The tailnet needs MagicDNS and HTTPS certificates turned on.
 - **Repo name.** `golf-sessions`, separate from `weekly-notes`.
