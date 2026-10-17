@@ -1,8 +1,9 @@
 FROM python:3.12-slim AS base
 LABEL org.opencontainers.image.source=https://github.com/rumstead/golf-etl
+# git and openssh-client push sessions to GitHub
 # libgl1 and libglib2.0 for opencv, libegl1 and libgles2 for mediapipe
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg libgl1 libegl1 libgles2 libglib2.0-0 \
+    && apt-get install -y --no-install-recommends ffmpeg git openssh-client libgl1 libegl1 libgles2 libglib2.0-0 \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY requirements.txt .
@@ -35,4 +36,4 @@ USER 10001
 # the pipeline runs as this user; fail the build if it cannot read the pose model
 RUN test -r /opt/golf-etl/pose_landmarker_lite.task
 ENTRYPOINT ["golf-etl"]
-CMD ["poll-drive"]
+CMD ["poll"]

@@ -1,4 +1,4 @@
-"""In-memory Drive for poller and retention tests, addressed by path like RcloneDrive.
+"""In-memory Store for poller and retention tests, addressed by path like RcloneStore.
 
 Like real Drive it allows two files with the same name in a folder; any operation on such an
 ambiguous path fails until dedupe() renames them.
@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
-from golf_etl.drive.client import Entry
+from golf_etl.storage.store import Entry
 
 
 @dataclass
@@ -28,7 +28,7 @@ def _under(path: str, folder: str) -> bool:
     return folder == "" or path == folder or path.startswith(folder + "/")
 
 
-class FakeDrive:
+class FakeStore:
     def __init__(self, now: datetime | None = None):
         self.now = now or datetime(2026, 10, 4, 12, 0, tzinfo=UTC)
         self.files: list[FakeFile] = []
@@ -68,7 +68,7 @@ class FakeDrive:
     def _is_dir(self, path: str) -> bool:
         return path in self.dirs
 
-    # Drive protocol
+    # Store protocol
     def list(self, folder, recursive=False, hashes=False):
         if not self._is_dir(folder):
             return []

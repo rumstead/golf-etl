@@ -16,7 +16,7 @@ from golf_etl.detect import Detection, Rejected, Swing, detect_swings
 from golf_etl.frames import Timing, after_shot_time, pick_positions, sharpest, swing_timing
 from golf_etl.media import VideoInfo, encode_clip, probe, read_audio, read_frames
 from golf_etl.pose import PoseEstimator, write_pose_csv
-from golf_etl.session import SessionSummary, session_id, write_session_md
+from golf_etl.session import SessionSummary, session_id, video_time, write_session_md
 
 Detector = Callable[[Path, VideoInfo, Settings], Detection]
 log = logging.getLogger(__name__)
@@ -99,6 +99,7 @@ def process_video(
             balls=balls,
             ball_median=ball_median,
             timings=timings,
+            storage=cfg.storage,
         ),
     )
     return SessionResult(sid, session_dir, len(detection.swings), detection.rejected)
@@ -150,7 +151,7 @@ def write_swing(
         ft, img = picked[name]
         small = render.fit(img, cfg.frame_long_edge // 2)
         overlays.append(render.draw_pose(small, swing.track.nearest(ft)))
-        labels.append(f"{name} {ft:.2f}s")
+        labels.append(f"{name} {video_time(ft)}")
     sheet = render.grid(overlays, labels, 4, cfg.frame_long_edge, cfg.frame_max_pixels)
     render.save_jpeg(sheet, out / "06-sequence.jpg", cfg.jpeg_quality)
     render.save_jpeg_within(
@@ -169,7 +170,7 @@ def write_swing(
         raise RuntimeError(f"no frames decoded for the after-shot frame at {after:.2f}s")
     ft, img = window[0]
     frame = render.fit(img, cfg.frame_long_edge, cfg.frame_max_pixels)
-    text = f"after shot {ft:.2f}s"
+    text = f"after shot {video_time(ft)}"
     render.save_jpeg(render.label(frame, text), out / "07-after-shot.jpg", cfg.jpeg_quality)
     render.save_jpeg_within(
         lambda edge: render.label(render.fit(frame, edge), text),

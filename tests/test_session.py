@@ -1,11 +1,14 @@
 from datetime import UTC, datetime
 
+import pytest
+
 from golf_etl.ball import BallFlight
 from golf_etl.detect import Rejected, Swing
 from golf_etl.frames import Timing
 from golf_etl.session import (
     SessionSummary,
     session_id,
+    video_time,
     write_session_md,
 )
 from tests.poses import swing_track
@@ -65,8 +68,8 @@ def test_session_md_grades_ball_flight_per_swing(tmp_path):
     )
     header = "| Swing | Impact | Strength | Hand speed peak | Ball px/frame | Start dir | Grade |"
     assert f"{header} Track |" in text
-    assert "| swing-01 | 65.81s | 0.45 | +50ms | 14.4 | -0.36 | poor | ok |" in text
-    assert "| swing-02 | 914.32s | 0.38 | -83ms | | | | lost: no ball launched |" in text
+    assert "| swing-01 | 1:05.8 | 0.45 | +50ms | 14.4 | -0.36 | poor | ok |" in text
+    assert "| swing-02 | 15:14.3 | 0.38 | -83ms | | | | lost: no ball launched |" in text
     assert "Ball px/frame" in text.split("| Swing |")[0]  # the guide explains the columns
 
 
@@ -113,3 +116,58 @@ def test_session_md_with_no_swings_says_so(tmp_path):
     assert "Rejected" not in path.read_text()
     assert "How to read" not in path.read_text()
     assert "## Timing" not in path.read_text()
+
+
+@pytest.mark.parametrize(
+    "t, text",
+    [
+        (4.369, "4.37s"),
+        (59.99, "59.99s"),
+        (59.996, "1:00.0"),
+        (60.0, "1:00.0"),
+        (727.4, "12:07.4"),
+        (3725.04, "62:05.0"),
+    ],
+)
+def test_video_time_switches_to_minutes_at_a_minute(t, text):
+    assert video_time(t) == text
+
+
+def test_video_time_rounds_into_the_next_minute():
+    assert video_time(119.96) == "2:00.0"
+
+
+def test_session_md_shows_long_video_times_in_minutes(tmp_path):
+    path = tmp_path / "session.md"
+    write_session_md(
+        path,
+        summary(
+            swings=[Swing(727.4, 1.0, 16.0, swing_track(727.4))],
+            rejected=[Rejected(61.2, 0.4, "too slow")],
+        ),
+    )
+    text = path.read_text()
+    assert "| swing-01 | 12:07.4 |" in text
+    assert "| 1:01.2 |" in text
+
+
+def _guide_summary(storage):
+    return summary(
+        swings=[Swing(12.4, 1.0, 16.0, swing_track(12.4))],
+        balls=[BallFlight("ok", ball_px_per_frame=14.4, start_dir=-0.36, grade="good")],
+        ball_median=14.4,
+        storage=storage,
+    )
+
+
+def test_github_session_md_does_not_mention_clips_or_small_copies(tmp_path):
+    write_session_md(tmp_path / "session.md", _guide_summary("github"))
+    text = (tmp_path / "session.md").read_text()
+    assert "clip.mp4" not in text and "-small.jpg" not in text and "Drive connector" not in text
+    assert "the frame number in the swing" in text
+
+
+def test_drive_session_md_keeps_the_drive_guide(tmp_path):
+    write_session_md(tmp_path / "session.md", _guide_summary("drive"))
+    text = (tmp_path / "session.md").read_text()
+    assert "06-sequence-small.jpg" in text and "`clip.mp4` is the swing as video." in text

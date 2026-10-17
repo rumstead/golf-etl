@@ -42,7 +42,11 @@ class Settings:
     # ball flight grade, as fractions of the session's median ball speed
     ball_good: float = 0.9
     ball_poor: float = 0.78
-    # drive
+    # storage: remote is the inbox and sessions in drive mode, inbox_root the inbox in github mode
+    storage: str = "github"
+    inbox_root: str = "/data"
+    sessions_repo: str = "git@github.com:rumstead/golf-sessions.git"
+    ssh_key_path: str = "/etc/golf-etl/ssh/id_ed25519"
     remote: str = "gdrive:golf"  # rclone remote and folder; a local path works too
     max_attempts: int = 3
     failed_ttl_days: int = 3

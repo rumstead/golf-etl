@@ -14,6 +14,9 @@ golf-etl = "golf_etl.cli:main"
 [tool.setuptools.packages.find]
 where = ["src"]
 
+[tool.setuptools.package-data]
+"golf_etl.storage" = ["github_known_hosts"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

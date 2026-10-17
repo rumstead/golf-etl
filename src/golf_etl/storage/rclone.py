@@ -1,7 +1,8 @@
-"""Drive implemented with the rclone binary.
+"""Store implemented with the rclone binary.
 
-The remote comes from rclone's environment config (RCLONE_CONFIG_GDRIVE_*), so the root is
-something like "gdrive:golf". Tests point it at a local folder instead.
+The root is either the Drive remote, which comes from rclone's environment config
+(RCLONE_CONFIG_GDRIVE_*) and looks like "gdrive:golf", or a local folder such as the inbox root
+in github mode.
 """
 
 import json
@@ -10,7 +11,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from golf_etl.drive.client import Entry
+from golf_etl.storage.store import Entry
 
 BASE_FLAGS = ["--log-level", "ERROR", "--drive-use-trash=false"]
 NOT_FOUND = {3, 4}  # rclone exit codes: directory not found, file not found
@@ -28,7 +29,7 @@ def _parse_time(value: str) -> datetime:
     return datetime.fromisoformat(trimmed)
 
 
-class RcloneDrive:
+class RcloneStore:
     def __init__(self, root: str, rclone: str = "rclone"):
         self.root = root.rstrip("/")
         self.rclone = rclone

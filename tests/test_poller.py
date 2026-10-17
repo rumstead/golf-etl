@@ -1,15 +1,17 @@
+import hashlib
 import json
-from datetime import timedelta
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import pytest
 
 from golf_etl.config import Settings
-from golf_etl.drive.client import STATE, State
-from golf_etl.drive.poller import Poller
-from golf_etl.drive.retention import sweep
 from golf_etl.pipeline import SessionResult
-from tests.fake_drive import FakeDrive
+from golf_etl.storage.poller import Poller
+from golf_etl.storage.publish import DrivePublisher
+from golf_etl.storage.retention import sweep_sessions
+from golf_etl.storage.store import STATE, State
+from tests.fake_store import FakeStore
 
 
 class FakeProcess:
@@ -36,216 +38,219 @@ class FakeProcess:
 
 @pytest.fixture
 def env(tmp_path):
-    drive = FakeDrive()
+    store = FakeStore()
     process = FakeProcess()
 
     def run():
-        return Poller(drive, Settings(), process, tmp_path / "scratch", "test").run()
+        return Poller(
+            store,
+            DrivePublisher(store, Settings()),
+            Settings(),
+            process,
+            tmp_path / "scratch",
+            "test",
+        ).run()
 
-    return drive, process, run
+    return store, process, run
 
 
-def sessions(drive):
-    return drive.names_in("sessions")
+def sessions(store):
+    return store.names_in("sessions")
 
 
-def attempts(drive, name_data: bytes) -> int:
-    import hashlib
-
-    return State.load(drive).attempts.get(hashlib.sha256(name_data).hexdigest(), 0)
+def attempts(store, name_data: bytes) -> int:
+    return State.load(store).attempts.get(hashlib.sha256(name_data).hexdigest(), 0)
 
 
 def test_first_run_creates_the_folder_layout(env):
-    drive, process, run = env
+    store, process, run = env
     run()
-    assert {"inbox", "processing", "failed", "sessions"} <= set(drive.dirs)
+    assert {"inbox", "processing", "failed"} <= set(store.dirs)
 
 
 def test_video_becomes_a_session_and_the_original_is_deleted(env):
-    drive, process, run = env
-    drive.add_video("IMG_1.MOV", data=b"swing one")
+    store, process, run = env
+    store.add_video("IMG_1.MOV", data=b"swing one")
     report = run()
     assert len(report.published) == 1
     sid = report.published[0]
-    assert sessions(drive) == [sid]
-    assert drive.names_in("inbox") == []
-    assert drive.names_in("processing") == []
-    assert "IMG_1.MOV" in drive.deleted
-    assert f"sessions/{sid}/swing-01/01-address.jpg" in drive.tree()
+    assert sessions(store) == [sid]
+    assert store.names_in("inbox") == []
+    assert store.names_in("processing") == []
+    assert "IMG_1.MOV" in store.deleted
+    assert f"sessions/{sid}/swing-01/01-address.jpg" in store.tree()
 
 
 def test_session_folder_has_a_marker_with_the_checksum(env):
-    drive, process, run = env
-    drive.add_video("IMG_1.MOV", data=b"swing one")
+    store, process, run = env
+    store.add_video("IMG_1.MOV", data=b"swing one")
     sid = run().published[0]
-    marker = json.loads(drive.read_text(f"sessions/{sid}/.golf-etl.json"))
+    marker = json.loads(store.read_text(f"sessions/{sid}/.golf-etl.json"))
     assert marker["sha256"] == process.calls[0]["checksum"]
     assert marker["sourceName"] == "IMG_1.MOV"
     assert marker["pipelineVersion"] == "test"
 
 
 def test_non_video_files_are_left_alone(env):
-    drive, process, run = env
-    drive.add_video("IMG_1.MOV")
-    drive.add("inbox/strike.jpg", b"photo")
+    store, process, run = env
+    store.add_video("IMG_1.MOV")
+    store.add("inbox/strike.jpg", b"photo")
     run()
-    assert drive.names_in("inbox") == ["strike.jpg"]
+    assert store.names_in("inbox") == ["strike.jpg"]
 
 
 def test_duplicates_in_one_poll_are_processed_once(env):
-    drive, process, run = env
-    drive.add_video("IMG_1.MOV", data=b"same", modified=drive.now)
-    drive.add_video("IMG_1 (1).MOV", data=b"same", modified=drive.now + timedelta(seconds=5))
+    store, process, run = env
+    store.add_video("IMG_1.MOV", data=b"same", modified=store.now)
+    store.add_video("IMG_1 (1).MOV", data=b"same", modified=store.now + timedelta(seconds=5))
     report = run()
     assert len(process.calls) == 1
     assert process.calls[0]["duplicates"] == ["IMG_1 (1).MOV"]
     assert report.duplicates == ["IMG_1 (1).MOV"]
-    assert len(sessions(drive)) == 1
-    assert drive.names_in("inbox") == []
+    assert len(sessions(store)) == 1
+    assert store.names_in("inbox") == []
 
 
 def test_reupload_after_success_replaces_the_session(env):
-    drive, process, run = env
-    drive.add_video("IMG_1.MOV", data=b"same")
+    store, process, run = env
+    store.add_video("IMG_1.MOV", data=b"same")
     sid = run().published[0]
-    drive.add_video("IMG_1.MOV", data=b"same")
+    store.add_video("IMG_1.MOV", data=b"same")
     run()
-    assert sessions(drive) == [sid]
+    assert sessions(store) == [sid]
     assert len(process.calls) == 2
-    assert drive.tree().count(f"sessions/{sid}/swing-01/01-address.jpg") == 1
+    assert store.tree().count(f"sessions/{sid}/swing-01/01-address.jpg") == 1
 
 
 def test_same_filename_different_content_makes_two_sessions(env):
-    drive, process, run = env
-    drive.add_video("IMG_1.MOV", data=b"monday")
-    drive.add_video("IMG_1.MOV", data=b"friday")  # Drive allows the same name twice
+    store, process, run = env
+    store.add_video("IMG_1.MOV", data=b"monday")
+    store.add_video("IMG_1.MOV", data=b"friday")  # Drive allows the same name twice
     run()
-    assert len(sessions(drive)) == 2
+    assert len(sessions(store)) == 2
 
 
 def test_first_and_second_failures_go_back_to_the_inbox(env):
-    drive, process, run = env
-    drive.add_video("bad.MOV", data=b"bad")
+    store, process, run = env
+    store.add_video("bad.MOV", data=b"bad")
     process.fail_on.add("bad.MOV")
     assert run().retrying == ["bad.MOV"]
-    assert attempts(drive, b"bad") == 1
-    assert drive.names_in("inbox") == ["bad.MOV"]
+    assert attempts(store, b"bad") == 1
+    assert store.names_in("inbox") == ["bad.MOV"]
     run()
-    assert attempts(drive, b"bad") == 2
+    assert attempts(store, b"bad") == 2
 
 
 def test_third_failure_moves_to_failed_with_an_error_file(env):
-    drive, process, run = env
-    drive.add_video("bad.MOV", data=b"bad")
+    store, process, run = env
+    store.add_video("bad.MOV", data=b"bad")
     process.fail_on.add("bad.MOV")
     run()
     run()
     assert run().failed == ["bad.MOV"]
-    assert drive.names_in("failed") == ["bad.MOV", "bad.MOV.error.txt"]
-    assert b"cannot decode bad.MOV" in drive.content("failed/bad.MOV.error.txt")
-    assert drive.names_in("inbox") == []
+    assert store.names_in("failed") == ["bad.MOV", "bad.MOV.error.txt"]
+    assert b"cannot decode bad.MOV" in store.content("failed/bad.MOV.error.txt")
+    assert store.names_in("inbox") == []
 
 
 def test_video_left_in_processing_is_recovered_and_retried(env):
-    drive, process, run = env
-    drive.add_video("IMG_1.MOV", folder="processing")
+    store, process, run = env
+    store.add_video("IMG_1.MOV", folder="processing")
     report = run()
     assert report.recovered == ["IMG_1.MOV"]
     assert len(report.published) == 1
-    assert drive.names_in("processing") == []
+    assert store.names_in("processing") == []
 
 
 def test_recovery_counts_as_an_attempt(env):
-    drive, process, run = env
-    drive.add_video("IMG_1.MOV", folder="processing", data=b"x")
+    store, process, run = env
+    store.add_video("IMG_1.MOV", folder="processing", data=b"x")
     process.fail_on.add("IMG_1.MOV")
     run()
-    assert attempts(drive, b"x") == 2  # recovery, then the failure
+    assert attempts(store, b"x") == 2  # recovery, then the failure
 
 
 def test_recovered_video_past_the_limit_goes_to_failed(env):
-    drive, process, run = env
-    import hashlib
-
-    drive.write_text(STATE, json.dumps({"attempts": {hashlib.sha256(b"x").hexdigest(): 2}}))
-    drive.add_video("IMG_1.MOV", folder="processing", data=b"x")
+    store, process, run = env
+    store.write_text(STATE, json.dumps({"attempts": {hashlib.sha256(b"x").hexdigest(): 2}}))
+    store.add_video("IMG_1.MOV", folder="processing", data=b"x")
     assert run().failed == ["IMG_1.MOV"]
 
 
 def test_reupload_of_a_failed_video_clears_it_and_starts_fresh(env):
-    drive, process, run = env
-    drive.add_video("bad.MOV", data=b"data")
+    store, process, run = env
+    store.add_video("bad.MOV", data=b"data")
     process.fail_on.add("bad.MOV")
     run()
     run()
     run()
     process.fail_on.clear()
-    drive.add_video("bad.MOV", data=b"data")
+    store.add_video("bad.MOV", data=b"data")
     report = run()
-    assert drive.names_in("failed") == []
+    assert store.names_in("failed") == []
     assert len(report.published) == 1
-    assert attempts(drive, b"data") == 0
+    assert attempts(store, b"data") == 0
 
 
 def test_crash_after_upload_keeps_the_previous_session(env, monkeypatch):
-    drive, process, run = env
-    drive.add_video("IMG_1.MOV", data=b"same")
+    store, process, run = env
+    store.add_video("IMG_1.MOV", data=b"same")
     sid = run().published[0]
-    drive.add_video("IMG_1.MOV", data=b"same")
-    real_move = drive.move
+    store.add_video("IMG_1.MOV", data=b"same")
+    real_move = store.move
 
     def die_on_swap(src, dst):
         if dst.endswith(f".old-{sid}"):
             raise RuntimeError("killed")
         real_move(src, dst)
 
-    monkeypatch.setattr(drive, "move", die_on_swap)
+    monkeypatch.setattr(store, "move", die_on_swap)
     run()
-    assert f"sessions/{sid}/swing-01/01-address.jpg" in drive.tree()
+    assert f"sessions/{sid}/swing-01/01-address.jpg" in store.tree()
 
 
 def test_crash_between_the_swap_renames_then_a_failed_upload_keeps_a_session(env, monkeypatch):
-    drive, process, run = env
-    drive.add_video("IMG_1.MOV", data=b"same")
+    store, process, run = env
+    store.add_video("IMG_1.MOV", data=b"same")
     sid = run().published[0]
-    real_move, real_upload = drive.move, drive.upload_tree
+    real_move, real_upload = store.move, store.upload_tree
 
     def die_after_moving_the_old_one(src, dst):
         if dst == f"sessions/{sid}":
             raise RuntimeError("killed")
         real_move(src, dst)
 
-    monkeypatch.setattr(drive, "move", die_after_moving_the_old_one)
-    drive.add_video("IMG_1.MOV", data=b"same")
+    monkeypatch.setattr(store, "move", die_after_moving_the_old_one)
+    store.add_video("IMG_1.MOV", data=b"same")
     run()
-    assert f".old-{sid}" in sessions(drive)
-    monkeypatch.setattr(drive, "move", real_move)
+    assert f".old-{sid}" in sessions(store)
+    monkeypatch.setattr(store, "move", real_move)
 
     def die_uploading(src, dst):
         raise RuntimeError("killed mid-upload")
 
-    monkeypatch.setattr(drive, "upload_tree", die_uploading)
-    drive.add_video("IMG_1.MOV", data=b"same")
+    monkeypatch.setattr(store, "upload_tree", die_uploading)
+    store.add_video("IMG_1.MOV", data=b"same")
     run()
-    monkeypatch.setattr(drive, "upload_tree", real_upload)
-    sweep(drive, Settings(), drive.now + timedelta(days=2))
-    assert f"sessions/{sid}/swing-01/01-address.jpg" in drive.tree()
+    monkeypatch.setattr(store, "upload_tree", real_upload)
+    sweep_sessions(store, Settings(), store.now + timedelta(days=2))
+    assert f"sessions/{sid}/swing-01/01-address.jpg" in store.tree()
 
 
 def test_leftover_temp_folder_is_replaced_on_the_next_publish(env):
-    drive, process, run = env
-    drive.add_video("IMG_1.MOV", data=b"same")
+    store, process, run = env
+    store.add_video("IMG_1.MOV", data=b"same")
     sid = run().published[0]
-    drive.mkdir(f"sessions/.tmp-{sid}")
-    drive.add_video("IMG_1.MOV", data=b"same")
+    store.mkdir(f"sessions/.tmp-{sid}")
+    store.add_video("IMG_1.MOV", data=b"same")
     run()
-    assert sessions(drive) == [sid]
+    assert sessions(store) == [sid]
 
 
 def test_one_bad_video_does_not_stop_the_others(env):
-    drive, process, run = env
-    drive.add_video("bad.MOV", data=b"bad")
-    drive.add_video("good.MOV", data=b"good")
+    store, process, run = env
+    store.add_video("bad.MOV", data=b"bad")
+    store.add_video("good.MOV", data=b"good")
     process.fail_on.add("bad.MOV")
     report = run()
     assert report.retrying == ["bad.MOV"]
@@ -253,11 +258,153 @@ def test_one_bad_video_does_not_stop_the_others(env):
 
 
 def test_awkward_filenames_survive_the_round_trip(env):
-    drive, process, run = env
+    store, process, run = env
     name = "Bob's swing #2 (café).MOV"
-    drive.add_video(name, data=b"swing")
+    store.add_video(name, data=b"swing")
     process.fail_on.add(name)
     run()
     run()
     run()
-    assert drive.names_in("failed") == sorted([name, f"{name}.error.txt"])
+    assert store.names_in("failed") == sorted([name, f"{name}.error.txt"])
+
+
+def test_poller_publishes_through_the_publisher(tmp_path):
+    class Recorder:
+        def __init__(self):
+            self.calls = []
+
+        def publish(self, session_dir, session_id, marker):
+            self.calls.append(
+                (session_id, marker["sha256"], sorted(p.name for p in session_dir.iterdir()))
+            )
+
+        def sweep(self, now):
+            raise AssertionError("the poller does not sweep")
+
+    store, rec = FakeStore(), Recorder()
+    store.add_video("a.mov", data=b"aaa")
+    Poller(store, rec, Settings(), FakeProcess(), tmp_path / "s", "test").run()
+    sha = hashlib.sha256(b"aaa").hexdigest()
+    assert rec.calls == [(f"2026-10-04-1200-{sha[:8]}", sha, ["session.md", "swing-01"])]
+    assert store.names_in("sessions") == []
+
+
+def test_status_tracks_a_video_from_processing_to_published(env):
+    store, process, run = env
+    store.add_video("a.mov", data=b"aaa")
+    run()
+    [item] = State.load(store).recent
+    assert (item["name"], item["status"]) == ("a.mov", "published")
+    assert item["session"].endswith(hashlib.sha256(b"aaa").hexdigest()[:8])
+
+
+def test_status_shows_retrying_then_failed_with_the_error(env):
+    store, process, run = env
+    store.add_video("bad.mov", data=b"bad")
+    process.fail_on.add("bad.mov")
+    run()
+    assert State.load(store).recent[0]["status"] == "retrying"
+    run()
+    run()
+    item = State.load(store).recent[0]
+    assert item["status"] == "failed" and "cannot decode bad.mov" in item["error"]
+
+
+def test_status_keeps_the_newest_fifty(env):
+    store, process, run = env
+    for i in range(55):
+        store.add_video(f"v{i}.mov", data=f"v{i}".encode())
+    run()
+    assert len(State.load(store).recent) == 50
+
+
+def test_failing_to_save_the_published_status_does_not_retry_the_video(env):
+    store, process, run = env
+    store.add_video("a.mov", data=b"aaa")
+    write_text = store.write_text
+    failures = []
+
+    def flaky(path, text):
+        if path == STATE and '"published"' in text and not failures:
+            failures.append(path)
+            raise OSError("state write failed")
+        write_text(path, text)
+
+    store.write_text = flaky
+    with pytest.raises(OSError):
+        run()
+    assert len(sessions(store)) == 1
+    assert store.names_in("inbox") == []
+    assert attempts(store, b"aaa") == 0
+    assert State.load(store).recent[0]["status"] == "processing"
+
+
+def test_recent_items_have_the_keys_the_upload_page_reads(env):
+    store, process, run = env
+    store.add_video("ok.mov", data=b"ok")
+    store.add_video("bad.mov", data=b"bad")
+    process.fail_on.add("bad.mov")
+    run()
+    items = {i["name"]: i for i in State.load(store).recent}
+    assert set(items["ok.mov"]) == {"sha256", "name", "status", "updated", "session"}
+    assert items["ok.mov"]["status"] == "published"
+    assert set(items["bad.mov"]) == {"sha256", "name", "status", "updated", "error"}
+    assert items["bad.mov"]["status"] == "retrying"
+    run()
+    run()
+    failed = {i["name"]: i for i in State.load(store).recent}["bad.mov"]
+    assert failed["status"] == "failed"
+    assert set(failed) == {"sha256", "name", "status", "updated", "error"}
+    assert items["ok.mov"]["sha256"] == hashlib.sha256(b"ok").hexdigest()
+    for item in (items["ok.mov"], failed):
+        assert datetime.fromisoformat(item["updated"]).utcoffset() == timedelta(0)
+
+
+def test_a_retried_then_published_video_has_one_item_at_the_front(env):
+    store, process, run = env
+    store.add_video("a.mov", data=b"aaa")
+    process.fail_on.add("a.mov")
+    run()
+    assert [i["status"] for i in State.load(store).recent] == ["retrying"]
+    process.fail_on.clear()
+    store.add_video("b.mov", data=b"bbb")
+    run()
+    run()
+    store.add_video("a.mov", data=b"aaa")
+    process.fail_on.add("a.mov")
+    run()
+    process.fail_on.clear()
+    run()
+    recent = State.load(store).recent
+    sha = hashlib.sha256(b"aaa").hexdigest()
+    assert [i["status"] for i in recent if i["sha256"] == sha] == ["published"]
+    assert len(recent) == 2
+
+
+def test_the_fifty_cap_keeps_the_newest(env):
+    store, process, run = env
+    for i in range(55):
+        store.add_video(f"v{i}.mov", data=f"v{i}".encode())
+    run()
+    before = State.load(store).recent
+    store.add_video("late.mov", data=b"late")
+    run()
+    after = State.load(store).recent
+    assert len(after) == 50
+    assert after[0]["name"] == "late.mov"
+    assert after[1:] == before[:49]
+
+
+def test_a_video_shows_as_processing_while_it_is_processed(env, monkeypatch):
+    store, process, run = env
+    store.add_video("a.mov", data=b"aaa")
+    seen = []
+    real_call = FakeProcess.__call__
+
+    def spy(self, *args, **kwargs):
+        seen.append([(i["name"], i["status"]) for i in State.load(store).recent])
+        return real_call(self, *args, **kwargs)
+
+    monkeypatch.setattr(FakeProcess, "__call__", spy)
+    run()
+    assert seen == [[("a.mov", "processing")]]
