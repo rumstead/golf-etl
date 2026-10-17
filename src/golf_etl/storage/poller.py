@@ -11,18 +11,18 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from golf_etl.config import Settings
-from golf_etl.drive.client import (
+from golf_etl.pipeline import SessionResult
+from golf_etl.storage.store import (
     FAILED,
     INBOX,
     MARKER,
     PROCESSING,
     SESSIONS,
-    Drive,
     Entry,
     State,
+    Store,
     ensure_layout,
 )
-from golf_etl.pipeline import SessionResult
 
 log = logging.getLogger(__name__)
 
@@ -39,14 +39,14 @@ class PollReport:
     failed: list[str] = field(default_factory=list)
 
 
-def session_checksum(drive: Drive, folder: str) -> str | None:
-    text = drive.read_text(f"{folder}/{MARKER}")
+def session_checksum(store: Store, folder: str) -> str | None:
+    text = store.read_text(f"{folder}/{MARKER}")
     return json.loads(text).get("sha256") if text else None
 
 
 @dataclass
 class Poller:
-    drive: Drive
+    store: Store
     cfg: Settings
     process: Processor
     scratch: Path
@@ -55,19 +55,19 @@ class Poller:
     state: State = field(default_factory=State)
 
     def run(self) -> PollReport:
-        ensure_layout(self.drive)
-        self.state = State.load(self.drive)
+        ensure_layout(self.store)
+        self.state = State.load(self.store)
         self.recover()
-        self.drive.dedupe(INBOX)
+        self.store.dedupe(INBOX)
         groups: dict[str, list[Entry]] = defaultdict(list)
-        for e in self.drive.list(INBOX, hashes=True):
+        for e in self.store.list(INBOX, hashes=True):
             if e.is_video and e.sha256:
                 groups[e.sha256].append(e)
         for checksum, copies in groups.items():
             copies.sort(key=lambda e: (e.modified, e.path))
             keep, extras = copies[0], copies[1:]
             for extra in extras:
-                self.drive.delete(extra.path)
+                self.store.delete(extra.path)
                 self.report.duplicates.append(extra.name)
             self.clear_failed(checksum)
             self.handle(keep, checksum, [e.name for e in extras])
@@ -75,7 +75,7 @@ class Poller:
 
     def recover(self) -> None:
         """Anything in processing/ at startup was left by a run that died."""
-        for e in self.drive.list(PROCESSING, hashes=True):
+        for e in self.store.list(PROCESSING, hashes=True):
             if e.is_dir:
                 continue
             self.report.recovered.append(e.name)
@@ -83,27 +83,27 @@ class Poller:
 
     def clear_failed(self, checksum: str) -> None:
         """A re-upload of a video that landed in failed/ replaces it and starts fresh."""
-        failed = self.drive.list(FAILED, hashes=True)
+        failed = self.store.list(FAILED, hashes=True)
         for e in failed:
             if e.sha256 != checksum:
                 continue
-            self.drive.delete(e.path)
+            self.store.delete(e.path)
             error = f"{FAILED}/{e.name}.error.txt"
             if any(f.path == error for f in failed):
-                self.drive.delete(error)
+                self.store.delete(error)
             if self.state.attempts.pop(checksum, None) is not None:
-                self.state.save(self.drive)
+                self.state.save(self.store)
 
     def handle(self, video: Entry, checksum: str, duplicates: list[str]) -> None:
         claimed = f"{PROCESSING}/{video.name}"
-        self.drive.move(video.path, claimed)
+        self.store.move(video.path, claimed)
         log.info("processing %s (%s)", video.name, checksum[:8])
         work = self.scratch / checksum[:16]
         shutil.rmtree(work, ignore_errors=True)
         work.mkdir(parents=True)
         try:
             local = work / video.name
-            self.drive.download(claimed, local)
+            self.store.download(claimed, local)
             result = self.process(
                 local,
                 work / "out",
@@ -113,9 +113,9 @@ class Poller:
                 duplicates=duplicates,
             )
             self.publish(result, checksum, video.name)
-            self.drive.delete(claimed)
+            self.store.delete(claimed)
             if self.state.attempts.pop(checksum, None) is not None:
-                self.state.save(self.drive)
+                self.state.save(self.store)
             self.report.published.append(result.session_id)
             log.info("published %s with %d swings", result.session_id, result.swings)
         except Exception:
@@ -127,19 +127,19 @@ class Poller:
     def attempt_failed(self, path: str, name: str, checksum: str, error: str) -> None:
         attempts = self.state.attempts.get(checksum, 0) + 1
         self.state.attempts[checksum] = attempts
-        self.state.save(self.drive)
+        self.state.save(self.store)
         if attempts < self.cfg.max_attempts:
-            self.drive.move(path, f"{INBOX}/{name}")
+            self.store.move(path, f"{INBOX}/{name}")
             self.report.retrying.append(name)
             log.warning("%s will be retried (attempt %d)", name, attempts)
             return
-        self.drive.move(path, f"{FAILED}/{name}")
-        self.drive.write_text(
+        self.store.move(path, f"{FAILED}/{name}")
+        self.store.write_text(
             f"{FAILED}/{name}.error.txt",
             f"{name} failed {attempts} times. Last error:\n\n{error}\n",
         )
         self.state.attempts.pop(checksum, None)
-        self.state.save(self.drive)
+        self.state.save(self.store)
         self.report.failed.append(name)
         log.error("%s moved to failed/ after %d attempts", name, attempts)
 
@@ -147,22 +147,22 @@ class Poller:
         """Upload to .tmp-<id>, then swap it in. A crash at any step leaves a readable session."""
         sid = result.session_id
         tmp, live, old = f"{SESSIONS}/.tmp-{sid}", f"{SESSIONS}/{sid}", f"{SESSIONS}/.old-{sid}"
-        names = {e.name for e in self.drive.list(SESSIONS) if e.is_dir}
+        names = {e.name for e in self.store.list(SESSIONS) if e.is_dir}
         if f".tmp-{sid}" in names:
-            self.drive.delete(tmp)
-        self.drive.upload_tree(result.session_dir, tmp)
+            self.store.delete(tmp)
+        self.store.upload_tree(result.session_dir, tmp)
         marker = {
             "sha256": checksum,
             "sourceName": source_name,
             "pipelineVersion": self.version,
             "published": datetime.now(UTC).isoformat(),
         }
-        self.drive.write_text(f"{tmp}/{MARKER}", json.dumps(marker, indent=2))
+        self.store.write_text(f"{tmp}/{MARKER}", json.dumps(marker, indent=2))
         if sid in names:
             # A leftover .old-<id> next to a live session is from a swap that finished.
             if f".old-{sid}" in names:
-                self.drive.delete(old)
-            self.drive.move(live, old)
-        self.drive.move(tmp, live)
+                self.store.delete(old)
+            self.store.move(live, old)
+        self.store.move(tmp, live)
         if sid in names or f".old-{sid}" in names:
-            self.drive.delete(old)
+            self.store.delete(old)

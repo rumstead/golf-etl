@@ -1,6 +1,6 @@
-"""The slice of Google Drive the poller needs, addressed by path under the golf root.
+"""A folder tree addressed by path: the inbox, and in drive mode the sessions too.
 
-RcloneDrive implements it; tests use an in-memory fake.
+RcloneStore implements it on a Drive remote or a local folder; tests use an in-memory fake.
 """
 
 import json
@@ -40,7 +40,7 @@ class Entry:
         )
 
 
-class Drive(Protocol):
+class Store(Protocol):
     def list(self, folder: str, recursive: bool = False, hashes: bool = False) -> list[Entry]:
         """Entries under folder, empty when it does not exist."""
         ...
@@ -61,9 +61,9 @@ class Drive(Protocol):
         ...
 
 
-def ensure_layout(drive: Drive) -> None:
+def ensure_layout(store: Store) -> None:
     for folder in (INBOX, PROCESSING, FAILED, SESSIONS):
-        drive.mkdir(folder)
+        store.mkdir(folder)
 
 
 @dataclass
@@ -73,9 +73,9 @@ class State:
     attempts: dict[str, int] = field(default_factory=dict)
 
     @classmethod
-    def load(cls, drive: Drive) -> "State":
-        text = drive.read_text(STATE)
+    def load(cls, store: Store) -> "State":
+        text = store.read_text(STATE)
         return cls(dict(json.loads(text).get("attempts", {}))) if text else cls()
 
-    def save(self, drive: Drive) -> None:
-        drive.write_text(STATE, json.dumps({"attempts": self.attempts}, indent=2, sort_keys=True))
+    def save(self, store: Store) -> None:
+        store.write_text(STATE, json.dumps({"attempts": self.attempts}, indent=2, sort_keys=True))

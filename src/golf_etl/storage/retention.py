@@ -10,7 +10,7 @@ from datetime import datetime, timedelta
 from pathlib import PurePosixPath
 
 from golf_etl.config import Settings
-from golf_etl.drive.client import FAILED, MARKER, SESSIONS, Drive
+from golf_etl.storage.store import FAILED, MARKER, SESSIONS, Store
 
 LEFTOVER_TTL = timedelta(days=1)
 
@@ -22,22 +22,22 @@ class SweepReport:
     bytes_after: int = 0
 
 
-def sweep(drive: Drive, cfg: Settings, now: datetime) -> SweepReport:
+def sweep(store: Store, cfg: Settings, now: datetime) -> SweepReport:
     report = SweepReport()
 
     def delete(path: str) -> None:
-        drive.delete(path)
+        store.delete(path)
         report.deleted.append(PurePosixPath(path).name)
 
     # Failed originals age from their error file: a video's own time is when it was shot.
-    failed = drive.list(FAILED)
+    failed = store.list(FAILED)
     errors = {e.name.removesuffix(".error.txt"): e for e in failed if e.name.endswith(".error.txt")}
     for e in failed:
         stamp = errors.get(e.name.removesuffix(".error.txt"), e).modified
         if now - stamp > timedelta(days=cfg.failed_ttl_days):
             delete(e.path)
 
-    entries = drive.list(SESSIONS, recursive=True)
+    entries = store.list(SESSIONS, recursive=True)
     top = [e for e in entries if e.is_dir and "/" not in e.path[len(SESSIONS) + 1 :]]
     names = {e.name for e in top}
     published = {PurePosixPath(e.path).parent.name: e.modified for e in entries if e.name == MARKER}
@@ -51,7 +51,7 @@ def sweep(drive: Drive, cfg: Settings, now: datetime) -> SweepReport:
                 delete(s.path)
                 gone.add(s.name)
             else:
-                drive.move(s.path, f"{SESSIONS}/{sid}")
+                store.move(s.path, f"{SESSIONS}/{sid}")
                 names.add(sid)
                 report.restored.append(sid)
                 gone.add(s.name)
