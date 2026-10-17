@@ -13,7 +13,7 @@ from golf_etl.audio import SAMPLE_RATE, Onset, find_onsets
 from golf_etl.ball import BallFlight, grade, track_ball, write_ball_json
 from golf_etl.config import Settings
 from golf_etl.detect import Detection, Rejected, Swing, detect_swings
-from golf_etl.frames import after_shot_time, pick_positions, sharpest
+from golf_etl.frames import Timing, after_shot_time, pick_positions, sharpest, swing_timing
 from golf_etl.media import VideoInfo, encode_clip, probe, read_audio, read_frames
 from golf_etl.pose import PoseEstimator, write_pose_csv
 from golf_etl.session import SessionSummary, session_id, write_session_md
@@ -68,12 +68,14 @@ def process_video(
     session_dir = out_root / sid
     session_dir.mkdir(parents=True, exist_ok=True)
     impacts = [s.impact_s for s in detection.swings]
-    balls = []
+    balls, timings = [], []
     for n, swing in enumerate(detection.swings, 1):
         next_impact = impacts[n] if n < len(impacts) else None
-        balls.append(
-            write_swing(video, info, swing, session_dir / f"swing-{n:02d}", cfg, next_impact)
+        flight, timing = write_swing(
+            video, info, swing, session_dir / f"swing-{n:02d}", cfg, next_impact
         )
+        balls.append(flight)
+        timings.append(timing)
     balls, ball_median = grade(balls, cfg.ball_good, cfg.ball_poor)
     for n, flight in enumerate(balls, 1):
         write_ball_json(
@@ -96,6 +98,7 @@ def process_video(
             duplicates=duplicates or [],
             balls=balls,
             ball_median=ball_median,
+            timings=timings,
         ),
     )
     return SessionResult(sid, session_dir, len(detection.swings), detection.rejected)
@@ -108,10 +111,12 @@ def write_swing(
     out: Path,
     cfg: Settings,
     next_impact_s: float | None = None,
-) -> BallFlight:
-    """Write the swing's frames and clip, and follow the ball in the clip."""
+) -> tuple[BallFlight, Timing]:
+    """Write the swing's frames and clip, follow the ball in the clip, and time the swing."""
     out.mkdir(parents=True, exist_ok=True)
-    positions = pick_positions(swing.track, swing.impact_s, cfg.still_speed)
+    positions = pick_positions(
+        swing.track, swing.impact_s, cfg.still_speed, cfg.transition_s, cfg.follow_through_s
+    )
     dt = 1 / info.fps
     picked: dict[str, tuple[float, np.ndarray]] = {}
     impact_frames: list[np.ndarray] = []
@@ -178,9 +183,11 @@ def write_swing(
         cfg.clip_crf,
     )
     write_pose_csv(swing.track, out / "pose.csv", swing.impact_s, clip_start, info.fps)
+    timing = swing_timing(positions, clip_start, info.fps)
     try:
-        return track_ball(out / "clip.mp4", swing.impact_s - clip_start, address_pose)
+        flight = track_ball(out / "clip.mp4", swing.impact_s - clip_start, address_pose)
     except Exception:
         # a tracking bug costs this swing its grade, not the whole session
         log.exception("ball tracking failed for %s", out.name)
-        return BallFlight("lost: tracking error")
+        flight = BallFlight("lost: tracking error")
+    return flight, timing

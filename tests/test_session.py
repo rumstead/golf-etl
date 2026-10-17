@@ -2,6 +2,7 @@ from datetime import UTC, datetime
 
 from golf_etl.ball import BallFlight
 from golf_etl.detect import Rejected, Swing
+from golf_etl.frames import Timing
 from golf_etl.session import SessionSummary, session_id, write_session_md
 from tests.poses import swing_track
 
@@ -65,9 +66,46 @@ def test_session_md_grades_ball_flight_per_swing(tmp_path):
     assert "Ball px/frame" in text.split("| Swing |")[0]  # the guide explains the columns
 
 
+def test_session_md_has_a_timing_table(tmp_path):
+    path = tmp_path / "session.md"
+    timing = Timing(
+        takeaway_start_s=11.2,
+        top_s=12.0,
+        impact_s=12.4,
+        takeaway_start_frame=144,
+        top_frame=240,
+        impact_frame=288,
+    )
+    write_session_md(
+        path, summary(swings=[Swing(12.4, 1.0, 16.0, swing_track(12.4))], timings=[timing])
+    )
+    text = path.read_text()
+    assert "## Timing" in text
+    assert "| swing-01 | 144 (11.20s) | 240 (12.00s) | 288 (12.40s) | 0.80s | 0.40s | 2.0 |" in text
+
+
+def test_timing_row_leaves_durations_out_when_the_top_is_out_of_frame(tmp_path):
+    path = tmp_path / "session.md"
+    timing = Timing(
+        takeaway_start_s=11.2,
+        top_s=12.0,
+        impact_s=12.4,
+        takeaway_start_frame=144,
+        top_frame=240,
+        impact_frame=288,
+        top_in_frame=False,
+    )
+    write_session_md(
+        path, summary(swings=[Swing(12.4, 1.0, 16.0, swing_track(12.4))], timings=[timing])
+    )
+    row = "| swing-01 | 144 (11.20s) | hands not seen at the top | 288 (12.40s) | | | |"
+    assert row in path.read_text()
+
+
 def test_session_md_with_no_swings_says_so(tmp_path):
     path = tmp_path / "session.md"
     write_session_md(path, summary())
     assert "No swings detected." in path.read_text()
     assert "Rejected" not in path.read_text()
     assert "How to read" not in path.read_text()
+    assert "## Timing" not in path.read_text()

@@ -65,6 +65,9 @@ def test_swing_folder_has_every_file_sized_for_claude(tmp_path):
         "Ball flight: 0 good, 0 fair, 0 poor, 1 not tracked"
         in (result.session_dir / "session.md").read_text()
     )
+    # the clip starts at 1.5s (impact 4.0s minus 2.5s), so impact is clip frame 75 at 30fps
+    assert "| swing-01 |" in (result.session_dir / "session.md").read_text().split("## Timing")[1]
+    assert "| 75 (4.00s) |" in (result.session_dir / "session.md").read_text()
 
 
 def test_video_without_a_person_writes_a_zero_swing_session(tmp_path):

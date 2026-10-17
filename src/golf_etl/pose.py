@@ -9,6 +9,7 @@ import mediapipe as mp
 import numpy as np
 from mediapipe.tasks.python import BaseOptions, vision
 
+LEFT_SHOULDER, RIGHT_SHOULDER = 11, 12
 LEFT_WRIST, RIGHT_WRIST = 15, 16
 LEFT_HIP, RIGHT_HIP = 23, 24
 LEFT_ANKLE, RIGHT_ANKLE = 27, 28
@@ -66,6 +67,11 @@ class PoseTrack:
         """(n,) how far the hands sit below the hips, in frame heights; negative is above."""
         hips = (self.landmarks[:, LEFT_HIP, 1] + self.landmarks[:, RIGHT_HIP, 1]) / 2
         return self.hands()[:, 1] - hips
+
+    def hands_below_shoulders(self) -> np.ndarray:
+        """(n,) how far the hands sit below the shoulders, in frame heights; negative is above."""
+        shoulders = (self.landmarks[:, LEFT_SHOULDER, 1] + self.landmarks[:, RIGHT_SHOULDER, 1]) / 2
+        return self.hands()[:, 1] - shoulders
 
     def leg_length(self) -> float:
         """Median hip to ankle height in frame heights, NaN when the legs are never seen. It

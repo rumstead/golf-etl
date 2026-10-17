@@ -7,10 +7,12 @@ import numpy as np
 from golf_etl.pose import (
     LEFT_ANKLE,
     LEFT_HIP,
+    LEFT_SHOULDER,
     LEFT_WRIST,
     NUM_LANDMARKS,
     RIGHT_ANKLE,
     RIGHT_HIP,
+    RIGHT_SHOULDER,
     RIGHT_WRIST,
     PoseTrack,
 )
@@ -31,13 +33,16 @@ def _hand_y(rel: np.ndarray, down_s: float = 0.4) -> np.ndarray:
 
 
 def _track(times: np.ndarray, hand_y: np.ndarray) -> PoseTrack:
-    """A golfer with hips at 0.55 and ankles at 0.9 (legs 0.35 frame heights long), so the
-    hands at address (0.6) sit just below the hips."""
+    """A golfer with shoulders at 0.3, hips at 0.55 and ankles at 0.9 (legs 0.35 frame heights
+    long), so the hands at address (0.6) sit just below the hips. Going back they reach the
+    hips 0.1s after takeaway and the shoulders 0.6s before impact."""
     lm = np.zeros((len(times), NUM_LANDMARKS, 3))
     lm[:, :, 2] = 0.9
     for idx in (LEFT_WRIST, RIGHT_WRIST):
         lm[:, idx, 0] = 0.5
         lm[:, idx, 1] = hand_y
+    lm[:, LEFT_SHOULDER, :2] = (0.45, 0.3)
+    lm[:, RIGHT_SHOULDER, :2] = (0.55, 0.3)
     lm[:, LEFT_HIP, :2] = (0.47, 0.55)
     lm[:, RIGHT_HIP, :2] = (0.53, 0.55)
     lm[:, LEFT_ANKLE, :2] = (0.45, 0.9)
@@ -125,4 +130,16 @@ def waggle_track(center_s: float, hand_y: float, fps: float = 60.0) -> PoseTrack
     bob = hand_y + 0.1 * np.sin(2 * np.pi * 3 * track.times)
     track.landmarks[:, LEFT_WRIST, 1] = bob
     track.landmarks[:, RIGHT_WRIST, 1] = bob
+    return track
+
+
+def late_rise_track(impact_s: float, fps: float = 60.0) -> PoseTrack:
+    """A swing_track whose hands creep back low and rise late in the backswing, reaching the
+    hips about 0.35s after takeaway instead of 0.1s."""
+    track = swing_track(impact_s, fps=fps)
+    rel = track.times - impact_s
+    back = (rel > -1.2) & (rel <= -0.4)
+    y = 0.6 - 0.4 * ((rel[back] + 1.2) / 0.8) ** 2.5
+    track.landmarks[back, LEFT_WRIST, 1] = y
+    track.landmarks[back, RIGHT_WRIST, 1] = y
     return track

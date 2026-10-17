@@ -28,6 +28,8 @@ class Settings:
     post_impact_s: float = 1.5
     after_shot_s: float = 8.0  # simulators show the shot's final numbers by about 8s
     still_speed: float = 0.15
+    transition_s: float = 0.1  # the transition panel, this long before impact
+    follow_through_s: float = 0.15  # the follow-through panel, this long after impact
     sharpness_radius: int = 2
     frame_long_edge: int = 2560
     frame_max_pixels: int = 3_700_000  # Claude reads up to about 3.75MP
