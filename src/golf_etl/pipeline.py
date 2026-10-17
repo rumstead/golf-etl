@@ -99,6 +99,7 @@ def process_video(
             balls=balls,
             ball_median=ball_median,
             timings=timings,
+            storage=cfg.storage,
         ),
     )
     return SessionResult(sid, session_dir, len(detection.swings), detection.rejected)

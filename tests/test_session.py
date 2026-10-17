@@ -148,3 +148,25 @@ def test_session_md_shows_long_video_times_in_minutes(tmp_path):
     text = path.read_text()
     assert "| swing-01 | 12:07.4 |" in text
     assert "| 1:01.2 |" in text
+
+
+def _guide_summary(storage):
+    return summary(
+        swings=[Swing(12.4, 1.0, 16.0, swing_track(12.4))],
+        balls=[BallFlight("ok", ball_px_per_frame=14.4, start_dir=-0.36, grade="good")],
+        ball_median=14.4,
+        storage=storage,
+    )
+
+
+def test_github_session_md_does_not_mention_clips_or_small_copies(tmp_path):
+    write_session_md(tmp_path / "session.md", _guide_summary("github"))
+    text = (tmp_path / "session.md").read_text()
+    assert "clip.mp4" not in text and "-small.jpg" not in text and "Drive connector" not in text
+    assert "the frame number in the swing" in text
+
+
+def test_drive_session_md_keeps_the_drive_guide(tmp_path):
+    write_session_md(tmp_path / "session.md", _guide_summary("drive"))
+    text = (tmp_path / "session.md").read_text()
+    assert "06-sequence-small.jpg" in text and "`clip.mp4` is the swing as video." in text
