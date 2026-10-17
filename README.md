@@ -1,9 +1,23 @@
 # golf-etl
 Break down golf swing videos into images for AI analysis.
 
-Share a swing video to the Google Drive folder `golf/inbox`. A few minutes later `golf/sessions/<session>/` has a folder per swing with an eight-position sequence sheet, an impact zoom, a frame a few seconds after impact that catches simulator or launch monitor numbers, the pose estimate as a CSV of joint positions, and a short clip. `session.md` grades each swing's ball flight (how fast the ball leaves the club, against the rest of the session) so good and bad swings can be picked out from text alone. The sequence sheet, impact zoom, and after-shot frame also have copies under 72KB that the claude.ai Drive connector can open. Ask claude.ai to review the session for coaching.
+Put a swing video in the inbox folder (`GOLF_INBOX_ROOT`, `/data` by default). A few minutes later `sessions/<session>/` in the private GitHub repo `rumstead/golf-sessions` has a folder per swing with an eight-position sequence sheet, an impact zoom, a frame a few seconds after impact that catches simulator or launch monitor numbers, and the pose estimate as a CSV of joint positions. `session.md` grades each swing's ball flight (how fast the ball leaves the club, against the rest of the session) and gives each swing's time in the video, so good and bad swings can be picked out from text alone. Images are full size (2560px long edge) so launch monitor numbers stay legible. Add `golf-sessions` in claude.ai with **+ > Add from GitHub** and ask it to review the session for coaching.
 
 How it works is in [docs/design.md](docs/design.md). It runs as a CronJob in [rumstead/homelab](https://github.com/rumstead/homelab) (`kubernetes/manifests/golf-etl`).
+
+## Settings
+Every setting in `src/golf_etl/config.py` can be overridden with `GOLF_<NAME>`.
+
+| Variable | Default | |
+|---|---|---|
+| `GOLF_STORAGE` | `github` | `github` or `drive` |
+| `GOLF_INBOX_ROOT` | `/data` | the inbox folder, with `processing/`, `failed/` and `.golf-etl/state.json` beside `inbox/` |
+| `GOLF_SESSIONS_REPO` | `git@github.com:rumstead/golf-sessions.git` | where sessions are pushed |
+| `GOLF_SSH_KEY_PATH` | `/etc/golf-etl/ssh/id_ed25519` | deploy key with write access to the repo |
+| `GOLF_SCRATCH_DIR` | `/scratch` | working space for videos and the git checkout |
+| `GOLF_FAILED_TTL_DAYS` | `3` | how long failed originals are kept |
+
+Sessions on GitHub are never deleted. Poll once with `golf-etl poll`; it exits with status 2 and a message when the deploy key is missing.
 
 ## Recording
 - Phone on a tripod, whole body and the ball in frame, face-on or down the line.
@@ -48,8 +62,8 @@ podman run --rm --user root -v "$PWD/local":/w:Z golf-etl eval /w/labels.yaml
 
 Thresholds are environment variables (`GOLF_ONSET_DELTA`, `GOLF_IMPACT_AUDIO_LAG_MS`, ...); see `src/golf_etl/config.py`.
 
-## Drive credentials
-The pipeline reaches Drive through rclone, which has its own verified Google app, so there is no Google Cloud setup.
+## Drive mode
+`GOLF_STORAGE=drive` keeps the Drive inbox `golf/inbox` and Drive sessions in `golf/sessions/`. Each swing also has a short `clip.mp4`, and the sequence sheet, impact zoom, and after-shot frame have copies under 72KB that the claude.ai Drive connector can open. Sessions expire after 60 days, clips after 14, and the oldest sessions go when they total over 3GiB (`GOLF_SESSION_TTL_DAYS`, `GOLF_CLIP_TTL_DAYS`, `GOLF_MAX_BYTES`). The pipeline reaches Drive through rclone.
 
 1. On any machine with rclone and a browser, run `rclone authorize "drive"`, approve, and copy the JSON token it prints.
 2. Put these in a `drive.env` (homelab keeps them in a SOPS secret). `--env-file` takes each line as is, so no quotes around the token:
@@ -61,5 +75,7 @@ The pipeline reaches Drive through rclone, which has its own verified Google app
    ```
 3. Run one poll by hand:
    ```sh
-   podman run --rm --env-file drive.env -e GOLF_SCRATCH_DIR=/tmp/scratch golf-etl poll-drive
+   podman run --rm --env-file drive.env -e GOLF_STORAGE=drive -e GOLF_SCRATCH_DIR=/tmp/scratch golf-etl poll
    ```
+
+To move the sessions in Drive to GitHub, run `golf-etl migrate-drive --dry-run`, then without the flag. It needs both the Drive environment above and the deploy key, refuses while anything is in the Drive `inbox/`, `processing/` or `failed/`, and deletes a session from Drive only after the push has every file at the same size.
