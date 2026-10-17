@@ -18,11 +18,13 @@ from pathlib import Path, PurePosixPath
 from stat import S_ISREG
 
 from golf_etl.config import Settings
-from golf_etl.storage.store import INBOX, STATE, VIDEO_SUFFIXES
+from golf_etl.storage.store import FAILED, INBOX, PROCESSING, STATE, VIDEO_SUFFIXES
 
 log = logging.getLogger(__name__)
 
 SWEEP_INTERVAL_S = 600
+# well under the 255-byte limit, leaving room for a -N suffix and the poller's .error.txt
+MAX_NAME_BYTES = 200
 # the hook and the sweep can finish the same upload at once
 _finish_lock = threading.Lock()
 
@@ -30,11 +32,22 @@ _finish_lock = threading.Lock()
 def safe_name(filename: str) -> str:
     name = re.split(r"[/\\]", filename)[-1]
     name = "".join(c for c in name if unicodedata.category(c) != "Cc").lstrip(".")
-    return name or "upload.mov"
+    if not name:
+        return "upload.mov"
+    suffix = PurePosixPath(name).suffix if _is_video(name) else ""
+    stem = name.removesuffix(suffix).encode()[: MAX_NAME_BYTES - len(suffix.encode())]
+    return stem.decode(errors="ignore") + suffix
+
+
+def _is_video(name: str) -> bool:
+    return PurePosixPath(name).suffix.lower() in VIDEO_SUFFIXES
 
 
 def finish_upload(upload: Path, filename: str, inbox: Path) -> Path | None:
     """Move a finished tusd upload into inbox and remove its .info.
+
+    The name is safe_name(filename), with .mov added when it is not a video and -2, -3 before
+    the suffix when inbox/, processing/, or failed/ next to it already has that name.
 
     Returns the new path, or None when the upload was already finished and its data is gone.
     """
@@ -43,13 +56,16 @@ def finish_upload(upload: Path, filename: str, inbox: Path) -> Path | None:
         if not upload.exists():
             info.unlink(missing_ok=True)
             return None
-        name = PurePosixPath(safe_name(filename))
+        name = safe_name(filename)
+        stem, suffix = (name, ".mov") if not _is_video(name) else os.path.splitext(name)
         inbox.mkdir(parents=True, exist_ok=True)
-        dest = inbox / name.name
-        n = 2
-        while dest.exists():
-            dest = inbox / f"{name.stem}-{n}{name.suffix}"
+        # the poller moves a retried video from processing/ back to inbox/ under its name
+        folders = [inbox, inbox.parent / PROCESSING, inbox.parent / FAILED]
+        candidate, n = stem + suffix, 2
+        while any((f / candidate).exists() for f in folders):
+            candidate = f"{stem}-{n}{suffix}"
             n += 1
+        dest = inbox / candidate
         os.replace(upload, dest)
         info.unlink(missing_ok=True)
         log.info("upload: moved %s to %s", upload.name, dest)
@@ -76,17 +92,20 @@ def sweep_uploads(upload_dir: Path, inbox: Path, now: datetime, ttl: timedelta) 
     """Finish complete uploads whose hook was missed, delete unfinished ones older than ttl."""
     done = []
     for data, stat, info in _uploads(upload_dir):
-        if data.with_name(f"{data.name}.lock").exists():
-            continue
-        name = _filename(info)
-        if stat.st_size == info.get("Size"):
-            if finish_upload(data, name, inbox):
+        try:
+            if data.with_name(f"{data.name}.lock").exists():
+                continue
+            name = _filename(info)
+            if stat.st_size == info.get("Size"):
+                if finish_upload(data, name, inbox):
+                    done.append(name)
+            elif now - datetime.fromtimestamp(stat.st_mtime, UTC) > ttl:
+                data.unlink(missing_ok=True)
+                data.with_name(f"{data.name}.info").unlink(missing_ok=True)
+                log.info("upload: deleted unfinished %s (%s)", data.name, safe_name(name))
                 done.append(name)
-        elif now - datetime.fromtimestamp(stat.st_mtime, UTC) > ttl:
-            data.unlink(missing_ok=True)
-            data.with_name(f"{data.name}.info").unlink(missing_ok=True)
-            log.info("upload: deleted unfinished %s (%s)", data.name, safe_name(name))
-            done.append(name)
+        except Exception:
+            log.exception("upload: sweep skipped %s", data.name)
     return done
 
 
@@ -119,7 +138,7 @@ def hook_response(payload: dict, cfg: Settings) -> dict:
     upload = (payload.get("Event") or {}).get("Upload") or {}
     filename = _filename(upload)
     if payload.get("Type") == "pre-create":
-        if PurePosixPath(filename).suffix.lower() not in VIDEO_SUFFIXES:
+        if not (_is_video(filename) and _is_video(safe_name(filename))):
             return {
                 "RejectUpload": True,
                 "HTTPResponse": {"StatusCode": 400, "Body": "only videos"},

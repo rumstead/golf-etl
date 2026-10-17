@@ -4,6 +4,7 @@ import threading
 import urllib.error
 import urllib.request
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -82,6 +83,33 @@ def test_finished_upload_name_cannot_leave_the_inbox(dirs):
     assert names == ["hidden.mov", "upload.mov", "x-2.mov", "x.mov"]
 
 
+def test_finished_upload_name_is_capped_and_keeps_its_suffix(dirs):
+    uploads, inbox = dirs
+    for uid, name, suffix in [
+        ("a", "a" * 300 + ".MOV", ".MOV"),
+        ("b", "\u00e9" * 200 + ".mov", ".mov"),
+    ]:
+        dest = finish_upload(add_upload(uploads, uid, b"v", 1), name, inbox)
+        assert len(dest.name.encode()) <= 200
+        assert dest.name.endswith(suffix)
+        assert dest.read_bytes() == b"v"
+
+
+def test_finished_upload_always_has_a_video_suffix(dirs):
+    uploads, inbox = dirs
+    assert finish_upload(add_upload(uploads, "a", b"v", 1), "..mov", inbox) == inbox / "mov.mov"
+
+
+def test_finished_upload_name_is_taken_while_processing_or_failed(tmp_path):
+    uploads, inbox = tmp_path / "uploads", tmp_path / "inbox"
+    for folder, name in [("processing", "IMG_4601.MOV"), ("failed", "IMG_4602.MOV")]:
+        (tmp_path / folder).mkdir()
+        (tmp_path / folder / name).write_bytes(b"older")
+    first = finish_upload(add_upload(uploads, "a", b"v", 1), "IMG_4601.MOV", inbox)
+    second = finish_upload(add_upload(uploads, "b", b"v", 1), "IMG_4602.MOV", inbox)
+    assert (first, second) == (inbox / "IMG_4601-2.MOV", inbox / "IMG_4602-2.MOV")
+
+
 def test_finishing_an_upload_twice_is_quiet(dirs):
     uploads, inbox = dirs
     upload = add_upload(uploads, "abc", b"video", 5)
@@ -96,6 +124,23 @@ def test_sweep_moves_a_complete_upload_whose_hook_was_missed(dirs):
     assert sweep_uploads(uploads, inbox, NOW, TTL) == ["IMG_4601.MOV"]
     assert (inbox / "IMG_4601.MOV").read_bytes() == b"video"
     assert list(uploads.iterdir()) == []
+
+
+def test_sweep_moves_the_other_uploads_when_one_fails(dirs, monkeypatch):
+    uploads, inbox = dirs
+    add_upload(uploads, "a", b"video", 5, filename="IMG_1.MOV")
+    add_upload(uploads, "b", b"video", 5, filename="IMG_2.MOV")
+    replace = os.replace
+
+    def failing_replace(src, dst):
+        if Path(src).name == "a":
+            raise OSError(36, "File name too long")
+        replace(src, dst)
+
+    monkeypatch.setattr("golf_etl.upload.os.replace", failing_replace)
+    assert sweep_uploads(uploads, inbox, NOW, TTL) == ["IMG_2.MOV"]
+    assert (uploads / "a").exists()
+    assert (inbox / "IMG_2.MOV").exists()
 
 
 def test_sweep_deletes_an_unfinished_upload_after_the_ttl(dirs):
@@ -156,6 +201,12 @@ def test_pre_create_hook_rejects_non_videos():
         "RejectUpload": True,
         "HTTPResponse": {"StatusCode": 400, "Body": "only videos"},
     }
+
+
+@pytest.mark.parametrize("filename", ["..mov", "a\\.mov", ""])
+def test_pre_create_hook_rejects_names_that_would_land_without_a_video_suffix(filename):
+    payload = {"Type": "pre-create", "Event": {"Upload": {"MetaData": {"filename": filename}}}}
+    assert hook_response(payload, Settings())["RejectUpload"] is True
 
 
 def test_pre_create_hook_accepts_videos():
