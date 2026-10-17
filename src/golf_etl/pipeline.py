@@ -16,7 +16,7 @@ from golf_etl.detect import Detection, Rejected, Swing, detect_swings
 from golf_etl.frames import Timing, after_shot_time, pick_positions, sharpest, swing_timing
 from golf_etl.media import VideoInfo, encode_clip, probe, read_audio, read_frames
 from golf_etl.pose import PoseEstimator, write_pose_csv
-from golf_etl.session import SessionSummary, session_id, write_session_md, write_session_zip
+from golf_etl.session import SessionSummary, session_id, write_session_md
 
 Detector = Callable[[Path, VideoInfo, Settings], Detection]
 log = logging.getLogger(__name__)
@@ -101,8 +101,6 @@ def process_video(
             timings=timings,
         ),
     )
-    if detection.swings:
-        write_session_zip(session_dir)  # last, so it picks up every other file
     return SessionResult(sid, session_dir, len(detection.swings), detection.rejected)
 
 
@@ -136,13 +134,6 @@ def write_swing(
             if not window:
                 raise RuntimeError(f"no frames decoded around {name} at {t:.2f}s")
             picked[name] = sharpest(window)
-
-    for n, (name, _) in enumerate(positions.items(), 1):
-        ft, img = picked[name]
-        frame = render.fit(img, cfg.frame_long_edge, cfg.frame_max_pixels)
-        render.save_jpeg(
-            render.label(frame, f"{name} {ft:.2f}s"), out / f"{n:02d}-{name}.jpg", cfg.jpeg_quality
-        )
 
     address_pose = swing.track.nearest(positions.address_s)
     crops = [render.zoom_crop(img, address_pose) for img in impact_frames]

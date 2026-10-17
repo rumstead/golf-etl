@@ -1,6 +1,5 @@
 """Session naming and the session.md summary."""
 
-import zipfile
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -8,9 +7,6 @@ from pathlib import Path
 from golf_etl.ball import BallFlight, summary_line
 from golf_etl.detect import Rejected, Swing
 from golf_etl.frames import Timing
-
-ZIP_TEXT_SUFFIXES = (".md", ".csv", ".json", ".txt")
-ZIP_TEXT_MAX_BYTES = 256 * 1024
 
 GUIDE = """## How to read this session
 
@@ -24,9 +20,7 @@ follow-through are the same short time before and after impact on every swing.
 and after impact, top to bottom. Use it for contact, shaft lean, and strike.
 - `06-sequence-small.jpg`, `05-impact-zoom-small.jpg`, and `07-after-shot-small.jpg` are \
 the same images under 72KB, small enough to read through the Drive connector. Use them when \
-the full-size image does not open. `session.zip` holds this file, every small image, and the \
-small text files in one download, with no clips or full-size frames.
-- `01-address.jpg` to `04-finish.jpg` are the key positions at full resolution for a closer look.
+the full-size image does not open.
 - `07-after-shot.jpg` is a full-resolution frame a few seconds after impact. On a simulator \
 or launch monitor its screen shows this shot's numbers (club path, face, speeds, spin, carry). \
 Numbers visible in any other frame belong to the previous shot.
@@ -140,24 +134,3 @@ def write_session_md(path: Path, s: SessionSummary) -> None:
     if s.duplicates:
         lines += ["", "## Removed duplicates", ""] + [f"- {name}" for name in s.duplicates]
     path.write_text("\n".join(lines) + "\n")
-
-
-def write_session_zip(session_dir: Path) -> None:
-    """session.zip with what a phone review needs: session.md, the small images, and small
-    text files. Clips, full-size frames, and hidden files stay out."""
-    out = session_dir / "session.zip"
-    files = sorted(p for p in session_dir.rglob("*") if p.is_file() and _zipped(p, session_dir))
-    tmp = out.with_name(".session.zip.tmp")
-    with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as z:
-        for p in files:
-            z.write(p, p.relative_to(session_dir).as_posix())
-    tmp.replace(out)
-
-
-def _zipped(path: Path, session_dir: Path) -> bool:
-    rel = path.relative_to(session_dir)
-    if path == session_dir / "session.zip" or any(part.startswith(".") for part in rel.parts):
-        return False
-    if path.name.endswith("-small.jpg"):
-        return True
-    return path.suffix in ZIP_TEXT_SUFFIXES and path.stat().st_size <= ZIP_TEXT_MAX_BYTES

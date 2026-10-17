@@ -27,15 +27,6 @@ class Positions:
     finish_s: float
     top_in_frame: bool = True  # False when the hands are not seen around the top
 
-    def items(self) -> list[tuple[str, float]]:
-        """The four key positions, saved as full frames."""
-        return [
-            ("address", self.address_s),
-            ("top", self.top_s),
-            ("impact", self.impact_s),
-            ("finish", self.finish_s),
-        ]
-
     def sequence(self) -> list[tuple[str, float]]:
         """Eight positions for the sequence sheet."""
         return [
