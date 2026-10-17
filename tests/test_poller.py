@@ -316,3 +316,24 @@ def test_status_keeps_the_newest_fifty(env):
         store.add_video(f"v{i}.mov", data=f"v{i}".encode())
     run()
     assert len(State.load(store).recent) == 50
+
+
+def test_failing_to_save_the_published_status_does_not_retry_the_video(env):
+    store, process, run = env
+    store.add_video("a.mov", data=b"aaa")
+    write_text = store.write_text
+    failures = []
+
+    def flaky(path, text):
+        if path == STATE and '"published"' in text and not failures:
+            failures.append(path)
+            raise OSError("state write failed")
+        write_text(path, text)
+
+    store.write_text = flaky
+    with pytest.raises(OSError):
+        run()
+    assert len(sessions(store)) == 1
+    assert store.names_in("inbox") == []
+    assert attempts(store, b"aaa") == 0
+    assert State.load(store).recent[0]["status"] == "processing"

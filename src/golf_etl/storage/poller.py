@@ -112,16 +112,18 @@ class Poller:
                 result.session_dir, result.session_id, marker(checksum, video.name, self.version)
             )
             self.inbox.delete(claimed)
+        except Exception:
+            log.exception("processing %s failed", video.name)
+            self.attempt_failed(claimed, video.name, checksum, traceback.format_exc())
+        else:
+            # Published: a failure saving state from here on must not send the video to retry.
+            self.report.published.append(result.session_id)
+            log.info("published %s with %d swings", result.session_id, result.swings)
             self.state.attempts.pop(checksum, None)
             self.state.note(
                 video.name, checksum, "published", datetime.now(UTC), session=result.session_id
             )
             self.state.save(self.inbox)
-            self.report.published.append(result.session_id)
-            log.info("published %s with %d swings", result.session_id, result.swings)
-        except Exception:
-            log.exception("processing %s failed", video.name)
-            self.attempt_failed(claimed, video.name, checksum, traceback.format_exc())
         finally:
             shutil.rmtree(work, ignore_errors=True)
 
