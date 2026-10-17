@@ -1,7 +1,6 @@
 """GitHubPublisher against a local bare repo over file://: the real git binary, no GitHub."""
 
 import json
-import os
 import shutil
 import subprocess
 
@@ -9,6 +8,7 @@ import pytest
 
 from golf_etl.storage.github import GitHubPublisher
 from golf_etl.storage.publish import marker
+from tests.conftest import git, tree
 
 pytestmark = pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
 
@@ -19,24 +19,6 @@ S1 = {
     "sessions/s1/swing-01/pose.csv",
 }
 S2 = {p.replace("/s1/", "/s2/") for p in S1}
-
-
-@pytest.fixture(autouse=True)
-def no_host_git_config(monkeypatch):
-    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
-    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
-
-
-def git(*args) -> str:
-    return subprocess.run(["git", *args], capture_output=True, check=True, text=True).stdout
-
-
-@pytest.fixture
-def remote(tmp_path):
-    path = tmp_path / "remote.git"
-    git("init", "--bare", "-b", "main", str(path))
-    git("-C", str(path), "config", "uploadpack.allowFilter", "true")
-    return path
 
 
 @pytest.fixture
@@ -53,11 +35,6 @@ def session(tmp_path, sid):
     (root / "swing-01" / "clip.mp4").write_bytes(b"clip")
     (root / "swing-01" / "pose.csv").write_text(f"frame,session\n1,{sid}\n")
     return root
-
-
-def tree(remote) -> set[str]:
-    out = git("--git-dir", str(remote), "ls-tree", "-r", "-l", "main")
-    return {line.split("\t", 1)[1] for line in out.splitlines()}
 
 
 def commits(remote) -> int:

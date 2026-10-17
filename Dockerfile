@@ -36,4 +36,4 @@ USER 10001
 # the pipeline runs as this user; fail the build if it cannot read the pose model
 RUN test -r /opt/golf-etl/pose_landmarker_lite.task
 ENTRYPOINT ["golf-etl"]
-CMD ["poll-drive"]
+CMD ["poll"]

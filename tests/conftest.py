@@ -1,3 +1,4 @@
+import os
 import subprocess
 from pathlib import Path
 
@@ -100,3 +101,28 @@ def make_video_with_clicks(
         check=True,
     )
     return path
+
+
+def git(*args) -> str:
+    return subprocess.run(["git", *args], capture_output=True, check=True, text=True).stdout
+
+
+@pytest.fixture
+def no_host_git_config(monkeypatch):
+    monkeypatch.setenv("GIT_CONFIG_GLOBAL", os.devnull)
+    monkeypatch.setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+
+@pytest.fixture
+def remote(tmp_path, no_host_git_config):
+    """A local bare repo that serves blob-filtered clones over file://, like GitHub does."""
+    path = tmp_path / "remote.git"
+    git("init", "--bare", "-b", "main", str(path))
+    git("-C", str(path), "config", "uploadpack.allowFilter", "true")
+    return path
+
+
+def tree(remote) -> set[str]:
+    """Every file path on the remote's main branch."""
+    out = git("--git-dir", str(remote), "ls-tree", "-r", "-l", "main")
+    return {line.split("\t", 1)[1] for line in out.splitlines()}
