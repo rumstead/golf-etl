@@ -16,7 +16,7 @@ from golf_etl.detect import Detection, Rejected, Swing, detect_swings
 from golf_etl.frames import Timing, after_shot_time, pick_positions, sharpest, swing_timing
 from golf_etl.media import VideoInfo, encode_clip, probe, read_audio, read_frames
 from golf_etl.pose import PoseEstimator, write_pose_csv
-from golf_etl.session import SessionSummary, session_id, write_session_md, write_session_zip
+from golf_etl.session import SessionSummary, session_id, write_session_md
 
 Detector = Callable[[Path, VideoInfo, Settings], Detection]
 log = logging.getLogger(__name__)
@@ -101,8 +101,6 @@ def process_video(
             timings=timings,
         ),
     )
-    if detection.swings:
-        write_session_zip(session_dir)  # last, so it picks up every other file
     return SessionResult(sid, session_dir, len(detection.swings), detection.rejected)
 
 
@@ -137,19 +135,15 @@ def write_swing(
                 raise RuntimeError(f"no frames decoded around {name} at {t:.2f}s")
             picked[name] = sharpest(window)
 
-    for n, (name, _) in enumerate(positions.items(), 1):
-        ft, img = picked[name]
-        frame = render.fit(img, cfg.frame_long_edge, cfg.frame_max_pixels)
-        render.save_jpeg(
-            render.label(frame, f"{name} {ft:.2f}s"), out / f"{n:02d}-{name}.jpg", cfg.jpeg_quality
-        )
-
     address_pose = swing.track.nearest(positions.address_s)
     crops = [render.zoom_crop(img, address_pose) for img in impact_frames]
     names = ["impact -1", "impact", "impact +1"] if len(crops) == 3 else ["impact"] * len(crops)
     strip = np.vstack([render.label(c, n) for c, n in zip(crops, names, strict=True)])
     zoom = render.fit(strip, cfg.frame_long_edge, cfg.frame_max_pixels)
     render.save_jpeg(zoom, out / "05-impact-zoom.jpg", cfg.jpeg_quality)
+    render.save_jpeg_within(
+        lambda edge: render.fit(strip, edge), out / "05-impact-zoom-small.jpg", cfg.small_max_bytes
+    )
 
     overlays, labels = [], []
     for name, _ in positions.sequence():
@@ -175,8 +169,12 @@ def write_swing(
         raise RuntimeError(f"no frames decoded for the after-shot frame at {after:.2f}s")
     ft, img = window[0]
     frame = render.fit(img, cfg.frame_long_edge, cfg.frame_max_pixels)
-    render.save_jpeg(
-        render.label(frame, f"after shot {ft:.2f}s"), out / "07-after-shot.jpg", cfg.jpeg_quality
+    text = f"after shot {ft:.2f}s"
+    render.save_jpeg(render.label(frame, text), out / "07-after-shot.jpg", cfg.jpeg_quality)
+    render.save_jpeg_within(
+        lambda edge: render.label(render.fit(frame, edge), text),
+        out / "07-after-shot-small.jpg",
+        cfg.small_max_bytes,
     )
 
     clip_start = max(0.0, swing.impact_s - cfg.pre_impact_s)

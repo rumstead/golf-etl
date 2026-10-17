@@ -1,7 +1,7 @@
 # golf-etl
 Break down golf swing videos into images for AI analysis.
 
-Share a swing video to the Google Drive folder `golf/inbox`. A few minutes later `golf/sessions/<session>/` has a folder per swing with an eight-position sequence sheet, an impact zoom, full-resolution key frames (address, top, impact, finish), a frame a few seconds after impact that catches simulator or launch monitor numbers, the pose estimate as a CSV of joint positions, and a short clip. `session.md` grades each swing's ball flight (how fast the ball leaves the club, against the rest of the session) so good and bad swings can be picked out from text alone. Each sequence sheet also has a copy under 72KB, and `session.zip` bundles those with `session.md` for a review from a phone. Ask claude.ai to review the session for coaching.
+Share a swing video to the Google Drive folder `golf/inbox`. A few minutes later `golf/sessions/<session>/` has a folder per swing with an eight-position sequence sheet, an impact zoom, a frame a few seconds after impact that catches simulator or launch monitor numbers, the pose estimate as a CSV of joint positions, and a short clip. `session.md` grades each swing's ball flight (how fast the ball leaves the club, against the rest of the session) so good and bad swings can be picked out from text alone. The sequence sheet, impact zoom, and after-shot frame also have copies under 72KB that the claude.ai Drive connector can open. Ask claude.ai to review the session for coaching.
 
 How it works is in [docs/design.md](docs/design.md). It runs as a CronJob in [rumstead/homelab](https://github.com/rumstead/homelab) (`kubernetes/manifests/golf-etl`).
 
@@ -12,7 +12,7 @@ How it works is in [docs/design.md](docs/design.md). It runs as a CronJob in [ru
 - Sound on. Swings are found by the impact sound.
 
 ## Coaching in claude.ai
-`claude/skills/golf-swing-analysis/` is the claude.ai skill that knows how to read a session: it finds the newest folder in `golf/sessions`, reads `session.md`, looks at each swing's sequence sheet and impact zoom, asks about ball flight once, and coaches. Zip the folder and upload it in claude.ai's skill settings (replacing an older copy), then ask:
+`claude/skills/golf-swing-analysis/` is the claude.ai skill that knows how to read a session: it finds the newest folder in `golf/sessions`, reads `session.md`, looks at each swing's sequence sheet and impact zoom through their small copies, uses the ball flight, timing, and simulator numbers it finds, asks about ball flight once when they do not settle it, and coaches. Zip the folder and upload it in claude.ai's skill settings (replacing an older copy), then ask:
 
 ```
 review my latest golf session

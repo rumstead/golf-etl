@@ -1,5 +1,4 @@
 import json
-import zipfile
 from datetime import UTC, datetime
 
 import pytest
@@ -14,13 +13,11 @@ from tests.poses import swing_track
 pytestmark = pytest.mark.media
 UPLOADED = datetime(2026, 10, 2, 9, 0, tzinfo=UTC)
 EXPECTED = [
-    "01-address.jpg",
-    "02-top.jpg",
-    "03-impact.jpg",
-    "04-finish.jpg",
+    "05-impact-zoom-small.jpg",
     "05-impact-zoom.jpg",
     "06-sequence-small.jpg",
     "06-sequence.jpg",
+    "07-after-shot-small.jpg",
     "07-after-shot.jpg",
     "ball.json",
     "clip.mp4",
@@ -42,20 +39,14 @@ def test_swing_folder_has_every_file_sized_for_claude(tmp_path):
     )
     swing = result.session_dir / "swing-01"
     assert sorted(p.name for p in swing.iterdir()) == EXPECTED
-    assert (swing / "06-sequence-small.jpg").stat().st_size <= Settings().small_max_bytes
-    with zipfile.ZipFile(result.session_dir / "session.zip") as z:
-        assert sorted(z.namelist()) == [
-            "session.md",
-            "swing-01/06-sequence-small.jpg",
-            "swing-01/ball.json",
-            "swing-01/pose.csv",
-        ]
+    for name in (n for n in EXPECTED if n.endswith("-small.jpg")):
+        assert (swing / name).stat().st_size <= Settings().small_max_bytes
     for name in (n for n in EXPECTED if n.endswith(".jpg")):
         with Image.open(swing / name) as img:
             assert max(img.size) <= 2560
             assert img.size[0] * img.size[1] <= 3_700_000
             assert img.mode == "RGB"
-    with Image.open(swing / "01-address.jpg") as img:
+    with Image.open(swing / "07-after-shot.jpg") as img:
         assert img.size == (2560, 1440)
     with Image.open(swing / "05-impact-zoom.jpg") as img:
         assert img.size == (2433, 1520)  # three 2592x540 native bands, fit to the pixel budget

@@ -54,17 +54,14 @@ golf/
   sessions/
     <session-id>/
       session.md
-      session.zip
       swing-01/
         clip.mp4
-        01-address.jpg
-        02-top.jpg
-        03-impact.jpg
-        04-finish.jpg
         05-impact-zoom.jpg
+        05-impact-zoom-small.jpg
         06-sequence.jpg
         06-sequence-small.jpg
         07-after-shot.jpg
+        07-after-shot-small.jpg
         ball.json
         pose.csv
 ```
@@ -104,13 +101,11 @@ All thresholds live in a config module with environment variable overrides (`GOL
   - Finish: highest hands from 0.3s after impact to the end of the clip window
   - For every position but impact, the sharpest frame (Laplacian variance) within plus or minus 2 frames of the target is used. Impact is never moved.
 - **Images**: JPEG quality 90, sRGB, metadata stripped, label and timestamp burned into a corner. Every image fits 2560px on the long edge and 3.7MP (`GOLF_FRAME_MAX_PIXELS`).
-  - `01` to `04`: full frame, 2560px long edge (never upscaled), no overlay
   - `05-impact-zoom.jpg`: a native-resolution band at ball height (centered on the ankles, a quarter of the frame tall, the frame width up to 1.2 frame heights) for impact minus 1, impact, and impact plus 1, stacked. The ball sits between the feet face-on but past the toes down the line, so the band covers both instead of guessing
   - `06-sequence.jpg`: the whole swing in one image, two rows of four in reading order: address, takeaway, halfway back, top, transition, impact, follow-through, finish. The backswing panels are body positions, so every swing is compared at the same point whatever its tempo: takeaway is the first moment after address the hands reach the hip line, halfway back the first moment they reach the shoulder line. Without hips or shoulders in the pose they fall back to a third and two thirds of the time from address to top. Transition is `GOLF_TRANSITION_S` (default 0.1s) before impact and follow-through `GOLF_FOLLOW_THROUGH_S` (default 0.15s) after it, kept between the top and the finish. Each panel has the pose skeleton and a label drawn after resizing so it stays legible, and the sheet fits 2560px and 3.7MP
 - `07-after-shot.jpg`: one full-resolution frame `GOLF_AFTER_SHOT_S` (default 8s) after impact, pulled earlier when the next swing's clip window starts sooner and kept inside the video. On a simulator the screen shows the previous shot until about 2s after impact and this shot's final numbers (carry, total) by about 8s, so this is the only frame whose numbers belong to the swing. On the range it is just the golfer after the shot.
 - `pose.csv`: the swing's pose track as numbers, one row per sample (up to 60 a second, the same track the sequence skeletons come from). Columns are the time in the video, milliseconds from impact, the nearest `clip.mp4` frame, then x, y and visibility for the nose, shoulders, wrists, hips, knees, and heels. x and y are fractions of the frame width and height from the top left, rounded to 3 decimals, and a sample without a pose leaves its cells empty. A 4s clip at 60 samples a second is about 50KB, so the Drive connector returns it in one call.
-- `06-sequence-small.jpg`: the same sheet rebuilt at the largest size and JPEG quality that fits `GOLF_SMALL_MAX_BYTES` (72,000 bytes), labels drawn at that size. The Drive connector returns file contents as base64 capped at about 100,000 characters per read, so this is the one image a phone review can pull; 72,000 bytes is 96,000 characters of base64, leaving room for the response around it. On 720p range footage it lands near 830x740 or 710x630 at 60 to 72KB.
-- `session.zip`: `session.md`, every swing's small sheet, and every text file (`.md`, `.csv`, `.json`, `.txt`) of 256KB or less, in the session's folder layout, for one download on a phone. Clips, full-size frames, and hidden files stay out, so a 30 swing session is about 2MB. It is written last, only when there are swings.
+- `06-sequence-small.jpg`, `05-impact-zoom-small.jpg`, `07-after-shot-small.jpg`: the same images at the largest size and JPEG quality that fits `GOLF_SMALL_MAX_BYTES` (72,000 bytes). The Drive connector returns file contents as base64 capped at about 100,000 characters per read, so these are the images a review through the connector can pull; 72,000 bytes is 96,000 characters of base64, leaving room for the response around it. The sequence sheet and after-shot labels are drawn at the small size. On 720p range footage the sheet lands near 830x740 or 710x630 at 60 to 72KB. A 1080p simulator after-shot frame fits at 1360x765, where every number on the screen reads the same as at full size.
 - `session.md` lists source name, capture time, hash, pipeline version, each swing with its impact timestamp, confidence and ball flight (speed, start direction, grade, or why the ball was not tracked) under a one-line ball flight summary, rejected candidates, and removed duplicates. A Timing table gives each swing's takeaway start, top, and impact as `clip.mp4` frame numbers (frame 0 is the clip start, at the source fps) with their time in the video, plus backswing time (takeaway start to top), downswing time (top to impact), and tempo (backswing over downswing). The takeaway start is the last moment before the hands reach the hips that they were within 0.05 leg lengths of their lowest point at address, on lightly smoothed heights, so pose jitter at address does not start it early. When the wrists' pose visibility drops below 0.5 around the top (the hands left the frame, or there is no pose) the top is reported as not seen and the durations are left blank. When there are swings it also carries a short "How to read this session" section naming each file, its order, and what it is good for, so any chat that reads it knows what to do without instructions. The Drive connector hands back text, not images, from a phone, so everything needed to rank swings is in this file; a 33 swing session is about 8KB.
 - Recording tip for the README: in daylight, 240fps slo-mo usually helps the impact frames more than 4K does because the faster shutter cuts blur. Both work.
 
@@ -188,8 +183,8 @@ Swings are found by audio onsets confirmed by fast hands at hip height at the so
 
 ### Swing frames for Claude
 Each swing gets a clip and labeled JPEGs decoded from the original video, 2560px long edge or smaller and never upscaled.
-- **Detected swing**: the folder contains `clip.mp4`, `pose.csv`, and `01-address.jpg` through `06-sequence.jpg`, each JPEG sRGB and labeled with position and timestamp.
-- **Phone review**: each swing has `06-sequence-small.jpg` under 72,000 bytes, and the session has `session.zip` with `session.md`, the small sheets, and the small text files.
+- **Detected swing**: the folder contains `clip.mp4`, `pose.csv`, `ball.json`, `05-impact-zoom.jpg`, `06-sequence.jpg`, and `07-after-shot.jpg`, each JPEG sRGB and labeled with position and timestamp.
+- **Connector review**: each swing has `06-sequence-small.jpg`, `05-impact-zoom-small.jpg`, and `07-after-shot-small.jpg` under 72,000 bytes.
 - **Impact zoom**: `05-impact-zoom.jpg` shows a native-resolution band at ball height for the frames before, at, and after impact, with the ball in it from either camera angle.
 - **iPhone footage**: HDR, portrait, APAC-plus-AAC `.mov` files process like any other video, with natural color.
 - **Blurry target frame**: for address, top, and finish, a sharper frame within two frames is used instead.
@@ -213,7 +208,7 @@ Each swing's ball flight is graded against the session in `session.md`, so a rev
 - **Re-upload of a failed video**: the failed copy and its error file are deleted and the new upload starts with a fresh attempt count.
 
 ## Coaching skill
-`claude/skills/golf-swing-analysis/SKILL.md` is the owner's claude.ai skill with a second way in. It triggers on requests like "review my latest golf session", finds the newest folder in `golf/sessions` (names sort by capture time), reads `session.md`, picks up to 5 swings spread across the session unless told otherwise, views each swing's `06-sequence.jpg` and `05-impact-zoom.jpg`, reads simulator or launch monitor numbers from `07-after-shot.jpg` when a screen is in view (and never from earlier frames, which show the previous shot), opens the full key frames only when needed, asks about ball flight once per session when there are no numbers, and then runs the existing coaching steps. It is uploaded to claude.ai by hand; claude.ai's copy is the one that runs.
+`claude/skills/golf-swing-analysis/SKILL.md` is the owner's claude.ai skill with a second way in. It triggers on requests like "review my latest golf session", finds the newest folder in `golf/sessions` (names sort by capture time), reads `session.md`, skips swings with no ball launched, picks up to 5 swings by ball flight grade (or spread across the session without grades) unless told otherwise, views each swing's `06-sequence-small.jpg` and `05-impact-zoom-small.jpg`, reads simulator or launch monitor numbers from `07-after-shot-small.jpg` when a screen is in view (and never from earlier frames, which show the previous shot), uses the Timing table and `pose.csv` for measurements, asks about ball flight shape once per session when there are no numbers, and then runs the existing coaching steps. It is uploaded to claude.ai by hand; claude.ai's copy is the one that runs.
 
 ## Risks / Trade-offs
 - claude.ai's Drive connector might not hand JPEGs to Claude as images → checked first with a test image, before any pipeline code. If it fails, the fallback is calling the Claude API from the pipeline.
