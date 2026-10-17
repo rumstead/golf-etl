@@ -53,6 +53,7 @@ claude.ai: + > Add from GitHub > golf-sessions, "review my latest golf session"
 - **A sweep every 10 minutes** moves complete uploads whose hook never arrived and deletes unfinished ones untouched for 24 hours (`GOLF_UPLOAD_TTL_HOURS`). Uploads tusd holds a lock on are left alone.
 - `upload-server` listens on `127.0.0.1` only, port 8090 (`GOLF_UPLOAD_PORT`), so nginx and tusd are its only clients.
 - The page sends each video in 50MB chunks with tus-js-client, one at a time, and resumes an interrupted upload when the same file is picked again. It lists `/status` every 10 seconds: uploads in progress, videos waiting in `inbox/`, and the recent results from `state.json`.
+- Videos are picked from Files (Choose File), not Photos: Photos hands Safari a re-encoded H.264 copy with its `creation_time` rewritten to the upload time, while Files hands it the original byte for byte.
 
 ### Layout
 Inbox, under `GOLF_INBOX_ROOT`:
