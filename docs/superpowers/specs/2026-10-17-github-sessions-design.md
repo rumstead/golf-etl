@@ -125,7 +125,7 @@ A one-time command:
 
 These were not discussed in detail; the owner can override any of them.
 
-- **Image budget.** GitHub never frees space, so review files are sized to last: a 30 swing session should be about 30MB or less, so the repo stays under GitHub's 10GB recommendation for at least 3 years at two sessions a week. Today's full-size files are about 2.5MB per swing (77MB per 30 swings), so they have to shrink. The builder picks sizes and qualities, but at the published size the skeleton keypoints, the ball, the club shaft, and every launch monitor number on `07-after-shot.jpg` must stay legible, checked on real sessions. The `-small.jpg` copies are not needed in `github` mode.
+- **Image size.** Full-size images keep today's settings (2560 long edge, quality 90), because at sizes that would cap a session at about 30MB the launch monitor numbers on `07-after-shot.jpg` stop being reliably readable. A 1080p range session is about 0.93MB per swing on GitHub, a detailed simulator session about 2.4MB per swing (about 75MB for 30 swings), so GitHub's 10GB recommendation holds roughly 130 of the largest sessions. The `-small.jpg` copies are not needed in `github` mode.
 - **GitHub credential.** A deploy key with write access to `golf-sessions` only, stored as a SOPS secret in the homelab. Deploy keys do not expire.
 - **Tailscale.** The operator authenticates with a Tailscale OAuth client, which does not expire like a node key. The tailnet needs MagicDNS and HTTPS certificates turned on.
 - **Repo name.** `golf-sessions`, separate from `weekly-notes`.
@@ -159,7 +159,6 @@ The builder should list these in the plan and wait on them where needed:
 - The upload server and page (for example tusd with a small static page), and how a finished upload moves into the inbox.
 - How the inbox seam is implemented for a local folder (a native implementation, or `RcloneDrive` pointed at a local path, which `GOLF_REMOTE` already allows).
 - How publishing to GitHub works (git with a shallow or sparse checkout, or the Git Data API) and the commit identity.
-- Image sizes and qualities within the budget above.
 - How to run the early iPhone check that the upload page delivers the original file (for example a throwaway page on the home network, comparing the uploaded file's checksum and metadata with the original).
 - Test strategy, following the existing fakes.
 - Removing the `spike/golf-connector-test` branch from `weekly-notes` once the design is built.
