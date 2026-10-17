@@ -15,6 +15,7 @@ golf-etl = "golf_etl.cli:main"
 where = ["src"]
 
 [tool.setuptools.package-data]
+"golf_etl" = ["upload_page/index.html"]
 "golf_etl.storage" = ["github_known_hosts"]
 
 [tool.pytest.ini_options]
