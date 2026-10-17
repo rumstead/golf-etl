@@ -125,3 +125,11 @@ def test_migration_keeps_a_drive_session_without_a_marker(store, pub, remote, tm
     assert report == MigrateReport(copied=[], deleted=[], kept=["s1"], blocked=[])
     assert not has_main(remote)
     assert store.tree() == before
+
+
+def test_a_session_with_a_duplicated_file_name_is_kept_on_drive(store, pub, remote, tmp_path):
+    store.add("sessions/s1/swing-01/01-address.jpg", b"second copy")
+    report = migrate(store, pub, tmp_path / "scratch", dry_run=False)
+    assert report == MigrateReport(copied=[], deleted=[], kept=["s1"], blocked=[])
+    assert [f.path for f in store.files].count("sessions/s1/swing-01/01-address.jpg") == 2
+    assert not has_main(remote)

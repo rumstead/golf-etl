@@ -56,6 +56,10 @@ def migrate(
             log.warning("%s has no %s, keeping it on Drive", sid, MARKER)
             report.kept.append(sid)
             continue
+        if len(rels) != len(set(rels)):
+            log.warning("%s has a file name more than once, keeping it on Drive", sid)
+            report.kept.append(sid)
+            continue
         log.info("%s: %d files", sid, len(rels))
         if dry_run:
             report.copied.append(sid)
