@@ -16,7 +16,7 @@ from golf_etl.detect import Detection, Rejected, Swing, detect_swings
 from golf_etl.frames import Timing, after_shot_time, pick_positions, sharpest, swing_timing
 from golf_etl.media import VideoInfo, encode_clip, probe, read_audio, read_frames
 from golf_etl.pose import PoseEstimator, write_pose_csv
-from golf_etl.session import SessionSummary, session_id, write_session_md
+from golf_etl.session import SessionSummary, session_id, write_session_md, write_session_zip
 
 Detector = Callable[[Path, VideoInfo, Settings], Detection]
 log = logging.getLogger(__name__)
@@ -101,6 +101,8 @@ def process_video(
             timings=timings,
         ),
     )
+    if detection.swings:
+        write_session_zip(session_dir)  # last, so it picks up every other file
     return SessionResult(sid, session_dir, len(detection.swings), detection.rejected)
 
 
@@ -157,6 +159,11 @@ def write_swing(
         labels.append(f"{name} {ft:.2f}s")
     sheet = render.grid(overlays, labels, 4, cfg.frame_long_edge, cfg.frame_max_pixels)
     render.save_jpeg(sheet, out / "06-sequence.jpg", cfg.jpeg_quality)
+    render.save_jpeg_within(
+        lambda edge: render.grid(overlays, labels, 4, edge, cfg.frame_max_pixels),
+        out / "06-sequence-small.jpg",
+        cfg.small_max_bytes,
+    )
 
     # On a simulator or launch monitor the screen shows this shot's numbers only seconds
     # after impact; every earlier frame shows the previous shot's.

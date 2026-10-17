@@ -1,9 +1,16 @@
+import zipfile
 from datetime import UTC, datetime
 
 from golf_etl.ball import BallFlight
 from golf_etl.detect import Rejected, Swing
 from golf_etl.frames import Timing
-from golf_etl.session import SessionSummary, session_id, write_session_md
+from golf_etl.session import (
+    ZIP_TEXT_MAX_BYTES,
+    SessionSummary,
+    session_id,
+    write_session_md,
+    write_session_zip,
+)
 from tests.poses import swing_track
 
 WHEN = datetime(2026, 10, 1, 15, 4, tzinfo=UTC)
@@ -109,3 +116,32 @@ def test_session_md_with_no_swings_says_so(tmp_path):
     assert "Rejected" not in path.read_text()
     assert "How to read" not in path.read_text()
     assert "## Timing" not in path.read_text()
+
+
+def test_session_zip_has_the_summary_small_images_and_small_text_files(tmp_path):
+    swing = tmp_path / "swing-01"
+    swing.mkdir()
+    (tmp_path / "session.md").write_text("# Session\n")
+    (tmp_path / ".golf-etl.json").write_text("{}")
+    for name in ("06-sequence-small.jpg", "01-address.jpg", "06-sequence.jpg", "clip.mp4"):
+        (swing / name).write_bytes(b"\xff\xd8 not really an image")
+    (swing / "pose.csv").write_text("t,x\n0,1\n")
+    (swing / "ball.json").write_text("{}")
+    (swing / "huge.csv").write_text("x" * (ZIP_TEXT_MAX_BYTES + 1))
+    write_session_zip(tmp_path)
+    with zipfile.ZipFile(tmp_path / "session.zip") as z:
+        assert sorted(z.namelist()) == [
+            "session.md",
+            "swing-01/06-sequence-small.jpg",
+            "swing-01/ball.json",
+            "swing-01/pose.csv",
+        ]
+        assert z.read("swing-01/pose.csv") == b"t,x\n0,1\n"
+
+
+def test_session_zip_replaces_an_older_copy_without_including_it(tmp_path):
+    (tmp_path / "session.md").write_text("# Session\n")
+    (tmp_path / "session.zip").write_bytes(b"stale")
+    write_session_zip(tmp_path)
+    with zipfile.ZipFile(tmp_path / "session.zip") as z:
+        assert z.namelist() == ["session.md"]

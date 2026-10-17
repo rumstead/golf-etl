@@ -34,6 +34,9 @@ class Settings:
     frame_long_edge: int = 2560
     frame_max_pixels: int = 3_700_000  # Claude reads up to about 3.75MP
     jpeg_quality: int = 90
+    # the Drive connector returns at most about 100,000 characters per read, and base64 makes
+    # a file 4/3 larger, so phone copies stay under this
+    small_max_bytes: int = 72_000
     clip_long_edge: int = 1920
     clip_crf: int = 23
     # ball flight grade, as fractions of the session's median ball speed

@@ -1,5 +1,7 @@
 """Turning RGB frames into the labeled JPEGs Claude reads."""
 
+import io
+from collections.abc import Callable
 from pathlib import Path
 
 import cv2
@@ -26,6 +28,9 @@ SKELETON = [
     (28, 32),
 ]
 ZOOM_BAND = 0.25  # impact zoom band height as a fraction of frame height
+# Sizes tried for a byte-bounded copy, largest first, then qualities at each size.
+SMALL_LONG_EDGES = (1600, 1360, 1150, 980, 830, 710, 600, 510, 430, 370, 320)
+SMALL_QUALITIES = (80, 70, 60)
 
 
 def fit(rgb: np.ndarray, long_edge: int, max_pixels: int | None = None) -> np.ndarray:
@@ -114,3 +119,20 @@ def zoom_crop(rgb: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
 def save_jpeg(rgb: np.ndarray, path: Path, quality: int) -> None:
     """sRGB JPEG with no EXIF or other metadata."""
     Image.fromarray(rgb).save(path, "JPEG", quality=quality, optimize=True)
+
+
+def save_jpeg_within(
+    make: Callable[[int], np.ndarray], path: Path, max_bytes: int
+) -> tuple[int, int]:
+    """Save the largest image, then the best quality, whose JPEG fits max_bytes, and return
+    (long edge, quality). make builds the image for a long edge, so labels are drawn at the
+    size they are seen."""
+    for edge in SMALL_LONG_EDGES:
+        img = Image.fromarray(make(edge))
+        for quality in SMALL_QUALITIES:
+            buf = io.BytesIO()
+            img.save(buf, "JPEG", quality=quality, optimize=True)
+            if buf.tell() <= max_bytes:
+                path.write_bytes(buf.getvalue())
+                return edge, quality
+    raise RuntimeError(f"{path.name} does not fit {max_bytes} bytes at any size")
