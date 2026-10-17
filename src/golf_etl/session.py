@@ -19,6 +19,11 @@ and after impact, top to bottom. Use it for contact, shaft lean, and strike.
 or launch monitor its screen shows this shot's numbers (club path, face, speeds, spin, carry). \
 Numbers visible in any other frame belong to the previous shot.
 - `clip.mp4` is the swing as video.
+- `pose.csv` is the pose estimate as numbers, one row per sample (up to 60 a second): time in \
+the video, ms from impact, the nearest `clip.mp4` frame, then x, y and visibility for the nose, \
+shoulders, wrists, hips, knees, and heels. x and y are fractions of the frame width and height \
+from the top left; empty cells mean no pose. Use it to measure hip turn, head movement, and \
+hand height instead of estimating from the images.
 - Every image has its position and its time in the video in the top-left corner.
 - The skeleton lines on the sequence sheet are a pose estimate; trust the photo over the lines.
 """

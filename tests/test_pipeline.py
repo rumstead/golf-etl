@@ -22,6 +22,7 @@ EXPECTED = [
     "07-after-shot.jpg",
     "ball.json",
     "clip.mp4",
+    "pose.csv",
 ]
 
 

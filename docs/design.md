@@ -64,6 +64,7 @@ golf/
         06-sequence.jpg
         07-after-shot.jpg
         ball.json
+        pose.csv
 ```
 Non-video files in `inbox/` are left alone (strike photos will use them later).
 
@@ -105,6 +106,7 @@ All thresholds live in a config module with environment variable overrides (`GOL
   - `05-impact-zoom.jpg`: a native-resolution band at ball height (centered on the ankles, a quarter of the frame tall, the frame width up to 1.2 frame heights) for impact minus 1, impact, and impact plus 1, stacked. The ball sits between the feet face-on but past the toes down the line, so the band covers both instead of guessing
   - `06-sequence.jpg`: the whole swing in one image, two rows of four in reading order: address, takeaway, halfway back, top, transition, impact, follow-through, finish. Takeaway and halfway back sit at a third and two thirds of the time from address to top, transition halfway from top to impact, follow-through halfway from impact to finish. Each panel has the pose skeleton and a label drawn after resizing so it stays legible, and the sheet fits 2560px and 3.7MP
 - `07-after-shot.jpg`: one full-resolution frame `GOLF_AFTER_SHOT_S` (default 8s) after impact, pulled earlier when the next swing's clip window starts sooner and kept inside the video. On a simulator the screen shows the previous shot until about 2s after impact and this shot's final numbers (carry, total) by about 8s, so this is the only frame whose numbers belong to the swing. On the range it is just the golfer after the shot.
+- `pose.csv`: the swing's pose track as numbers, one row per sample (up to 60 a second, the same track the sequence skeletons come from). Columns are the time in the video, milliseconds from impact, the nearest `clip.mp4` frame, then x, y and visibility for the nose, shoulders, wrists, hips, knees, and heels. x and y are fractions of the frame width and height from the top left, rounded to 3 decimals, and a sample without a pose leaves its cells empty. A 4s clip at 60 samples a second is about 50KB, so the Drive connector returns it in one call.
 - `session.md` lists source name, capture time, hash, pipeline version, each swing with its impact timestamp, confidence and ball flight (speed, start direction, grade, or why the ball was not tracked) under a one-line ball flight summary, rejected candidates, and removed duplicates. When there are swings it also carries a short "How to read this session" section naming each file, its order, and what it is good for, so any chat that reads it knows what to do without instructions. The Drive connector hands back text, not images, from a phone, so everything needed to rank swings is in this file; a 33 swing session is about 8KB.
 - Recording tip for the README: in daylight, 240fps slo-mo usually helps the impact frames more than 4K does because the faster shutter cuts blur. Both work.
 
@@ -182,7 +184,7 @@ Swings are found by audio onsets confirmed by fast hands at hip height at the so
 
 ### Swing frames for Claude
 Each swing gets a clip and labeled JPEGs decoded from the original video, 2560px long edge or smaller and never upscaled.
-- **Detected swing**: the folder contains `clip.mp4` and `01-address.jpg` through `06-sequence.jpg`, each JPEG sRGB and labeled with position and timestamp.
+- **Detected swing**: the folder contains `clip.mp4`, `pose.csv`, and `01-address.jpg` through `06-sequence.jpg`, each JPEG sRGB and labeled with position and timestamp.
 - **Impact zoom**: `05-impact-zoom.jpg` shows a native-resolution band at ball height for the frames before, at, and after impact, with the ball in it from either camera angle.
 - **iPhone footage**: HDR, portrait, APAC-plus-AAC `.mov` files process like any other video, with natural color.
 - **Blurry target frame**: for address, top, and finish, a sharper frame within two frames is used instead.

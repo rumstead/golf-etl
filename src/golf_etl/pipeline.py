@@ -15,7 +15,7 @@ from golf_etl.config import Settings
 from golf_etl.detect import Detection, Rejected, Swing, detect_swings
 from golf_etl.frames import after_shot_time, pick_positions, sharpest
 from golf_etl.media import VideoInfo, encode_clip, probe, read_audio, read_frames
-from golf_etl.pose import PoseEstimator
+from golf_etl.pose import PoseEstimator, write_pose_csv
 from golf_etl.session import SessionSummary, session_id, write_session_md
 
 Detector = Callable[[Path, VideoInfo, Settings], Detection]
@@ -177,6 +177,7 @@ def write_swing(
         cfg.clip_long_edge,
         cfg.clip_crf,
     )
+    write_pose_csv(swing.track, out / "pose.csv", swing.impact_s, clip_start, info.fps)
     try:
         return track_ball(out / "clip.mp4", swing.impact_s - clip_start, address_pose)
     except Exception:
