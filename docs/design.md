@@ -29,9 +29,9 @@ phone --share--> Drive golf/inbox/
      golf-etl poll-drive (every 3 minutes, never overlapping)
        1. recover   anything left in processing/ goes back to inbox/
        2. claim     move the video to processing/
-       3. detect    audio onsets, confirmed by fast hands at the sound
+       3. detect    audio onsets, confirmed by fast hands at hip height
        4. slice     impact -2.5s .. +1.5s, re-encoded
-       5. frames    address / top / impact / finish, impact zoom, pose sheet
+       5. frames    address / top / impact / finish, impact zoom, pose sheet, ball flight
        6. publish   write sessions/.tmp-<id>/, swap into sessions/<id>/
        7. delete    original permanently deleted
        8. sweep     TTLs and size cap
@@ -54,6 +54,7 @@ golf/
   sessions/
     <session-id>/
       session.md
+      session.zip
       swing-01/
         clip.mp4
         01-address.jpg
@@ -62,7 +63,10 @@ golf/
         04-finish.jpg
         05-impact-zoom.jpg
         06-sequence.jpg
+        06-sequence-small.jpg
         07-after-shot.jpg
+        ball.json
+        pose.csv
 ```
 Non-video files in `inbox/` are left alone (strike photos will use them later).
 
@@ -84,9 +88,9 @@ None of these are errors. A copy uploaded while a run is processing the same vid
 ### Swing detection
 1. ffmpeg extracts the first decodable audio track as 48kHz mono. iPhones put an APAC spatial audio track first that ffmpeg cannot decode, so it is skipped. librosa onset detection runs on a high-passed signal (about 2kHz) to suppress voices and wind, and each onset is backtracked from the envelope peak to where the transient starts.
 2. Onsets are moved earlier by `GOLF_IMPACT_AUDIO_LAG_MS` (default 12). The sound reaches the phone after contact and the phone adds its own audio/video offset; on the first two labeled clips the raw transient trailed the visible contact frame by 17 to 23ms.
-3. Candidates closer than 8s to a stronger candidate are dropped. Dropped ones with strength 0.5 or more are listed in `session.md` as rejected so a missed swing is visible.
-4. MediaPipe Pose Landmarker (lite) runs on the clip window around each candidate (impact minus 2.5s to plus 1.5s) at 640px and at most 60fps, never on the whole video. The largest person in frame is the golfer. A candidate is confirmed when the hands (midpoint of both wrists, which works for either handedness) move at least 1.0 frame heights per second within 300ms of the onset. Where the hands are fastest overall does not matter: in a 12 minute simulator session, 10 of 21 swings had their fastest hands in the follow-through, 400 to 1300ms after impact. Sounds made while the hands are slow (a club soled or tapped at address) are rejected. Unconfirmed candidates are recorded in `session.md` as rejected with the reason.
-5. Videos under 15s keep only the single strongest confirmed candidate.
+3. Every onset is a candidate. Transients closer than 0.25s are merged into the stronger one (a sound and its echo), but loudness never decides between swings: a club tap, the finish, and a practice swing can all be louder than the strike a few seconds away.
+4. MediaPipe Pose Landmarker (lite) runs on a 0.8s window around each candidate at 640px and at most 60fps, never on the whole video. The largest person in frame is the golfer. A candidate is confirmed when, within 200ms of the onset (`GOLF_CONFIRM_WINDOW_MS`), the hands (midpoint of both wrists, which works for either handedness) move at least 4 leg lengths per second (`GOLF_CONFIRM_MIN_SPEED`), and at the onset they sit between 0.15 leg lengths above and 0.25 below the hips (`GOLF_CONFIRM_HANDS_MIN`, `GOLF_CONFIRM_HANDS_MAX`). Leg length is the median hip to ankle height in the window, so a phone close to the golfer does not make a waggle look fast; on five labeled videos from three camera spots the strikes ran 4.8 to 9.9 leg lengths per second. The hand height check rejects fast hands at the top or the finish and waggles at address. Where the hands are fastest overall does not matter: in a 12 minute simulator session, 10 of 21 swings had their fastest hands in the follow-through, 400 to 1300ms after impact.
+5. Confirmed candidates closer than 8s (`GOLF_ONSET_MIN_GAP_S`) keep the one with the fastest hands. Videos under 15s keep only the fastest. Only kept swings get pose for the whole clip window (impact minus 2.5s to plus 1.5s) for frame selection. Every other candidate is listed in `session.md` as rejected with the reason.
 6. Zero confirmed swings is not a failure. The session is written with `session.md` only.
 
 All thresholds live in a config module with environment variable overrides (`GOLF_ONSET_MIN_GAP_S`, `GOLF_CONFIRM_WINDOW_MS`, and so on) so tuning does not need a rebuild.
@@ -98,14 +102,29 @@ All thresholds live in a config module with environment variable overrides (`GOL
   - Top: highest hands in the 2s before impact
   - Impact: frame nearest the corrected audio onset
   - Finish: highest hands from 0.3s after impact to the end of the clip window
-  - For address, top, and finish, the sharpest frame (Laplacian variance) within plus or minus 2 frames of the target is used. Impact is never moved.
+  - For every position but impact, the sharpest frame (Laplacian variance) within plus or minus 2 frames of the target is used. Impact is never moved.
 - **Images**: JPEG quality 90, sRGB, metadata stripped, label and timestamp burned into a corner. Every image fits 2560px on the long edge and 3.7MP (`GOLF_FRAME_MAX_PIXELS`).
   - `01` to `04`: full frame, 2560px long edge (never upscaled), no overlay
   - `05-impact-zoom.jpg`: a native-resolution band at ball height (centered on the ankles, a quarter of the frame tall, the frame width up to 1.2 frame heights) for impact minus 1, impact, and impact plus 1, stacked. The ball sits between the feet face-on but past the toes down the line, so the band covers both instead of guessing
-  - `06-sequence.jpg`: the whole swing in one image, two rows of four in reading order: address, takeaway, halfway back, top, transition, impact, follow-through, finish. Takeaway and halfway back sit at a third and two thirds of the time from address to top, transition halfway from top to impact, follow-through halfway from impact to finish. Each panel has the pose skeleton and a label drawn after resizing so it stays legible, and the sheet fits 2560px and 3.7MP
+  - `06-sequence.jpg`: the whole swing in one image, two rows of four in reading order: address, takeaway, halfway back, top, transition, impact, follow-through, finish. The backswing panels are body positions, so every swing is compared at the same point whatever its tempo: takeaway is the first moment after address the hands reach the hip line, halfway back the first moment they reach the shoulder line. Without hips or shoulders in the pose they fall back to a third and two thirds of the time from address to top. Transition is `GOLF_TRANSITION_S` (default 0.1s) before impact and follow-through `GOLF_FOLLOW_THROUGH_S` (default 0.15s) after it, kept between the top and the finish. Each panel has the pose skeleton and a label drawn after resizing so it stays legible, and the sheet fits 2560px and 3.7MP
 - `07-after-shot.jpg`: one full-resolution frame `GOLF_AFTER_SHOT_S` (default 8s) after impact, pulled earlier when the next swing's clip window starts sooner and kept inside the video. On a simulator the screen shows the previous shot until about 2s after impact and this shot's final numbers (carry, total) by about 8s, so this is the only frame whose numbers belong to the swing. On the range it is just the golfer after the shot.
-- `session.md` lists source name, capture time, hash, pipeline version, each swing with its impact timestamp and confidence, rejected candidates, and removed duplicates. When there are swings it also carries a short "How to read this session" section naming each file, its order, and what it is good for, so any chat that reads it knows what to do without instructions.
+- `pose.csv`: the swing's pose track as numbers, one row per sample (up to 60 a second, the same track the sequence skeletons come from). Columns are the time in the video, milliseconds from impact, the nearest `clip.mp4` frame, then x, y and visibility for the nose, shoulders, wrists, hips, knees, and heels. x and y are fractions of the frame width and height from the top left, rounded to 3 decimals, and a sample without a pose leaves its cells empty. A 4s clip at 60 samples a second is about 50KB, so the Drive connector returns it in one call.
+- `06-sequence-small.jpg`: the same sheet rebuilt at the largest size and JPEG quality that fits `GOLF_SMALL_MAX_BYTES` (72,000 bytes), labels drawn at that size. The Drive connector returns file contents as base64 capped at about 100,000 characters per read, so this is the one image a phone review can pull; 72,000 bytes is 96,000 characters of base64, leaving room for the response around it. On 720p range footage it lands near 830x740 or 710x630 at 60 to 72KB.
+- `session.zip`: `session.md`, every swing's small sheet, and every text file (`.md`, `.csv`, `.json`, `.txt`) of 256KB or less, in the session's folder layout, for one download on a phone. Clips, full-size frames, and hidden files stay out, so a 30 swing session is about 2MB. It is written last, only when there are swings.
+- `session.md` lists source name, capture time, hash, pipeline version, each swing with its impact timestamp, confidence and ball flight (speed, start direction, grade, or why the ball was not tracked) under a one-line ball flight summary, rejected candidates, and removed duplicates. A Timing table gives each swing's takeaway start, top, and impact as `clip.mp4` frame numbers (frame 0 is the clip start, at the source fps) with their time in the video, plus backswing time (takeaway start to top), downswing time (top to impact), and tempo (backswing over downswing). The takeaway start is the last moment before the hands reach the hips that they were within 0.05 leg lengths of their lowest point at address, on lightly smoothed heights, so pose jitter at address does not start it early. When the wrists' pose visibility drops below 0.5 around the top (the hands left the frame, or there is no pose) the top is reported as not seen and the durations are left blank. When there are swings it also carries a short "How to read this session" section naming each file, its order, and what it is good for, so any chat that reads it knows what to do without instructions. The Drive connector hands back text, not images, from a phone, so everything needed to rank swings is in this file; a 33 swing session is about 8KB.
 - Recording tip for the README: in daylight, 240fps slo-mo usually helps the impact frames more than 4K does because the faster shutter cuts blur. Both work.
+
+### Ball flight
+The ball is the only small object that sits still before impact and leaves its spot fast, so it is found against per-pixel medians without a trained model. It is read off each swing's `clip.mp4` (the clip keeps the source frame rate), from 0.5s before impact to 1.42s after, at 960px on the long edge. Pixel limits below are at that scale and per frame at 120fps, scaled to the clip's frame rate.
+1. **Camera check.** When more than 15% of the background outside the golfer (the address pose's extent plus 0.05 frame widths) changes brightness by more than 40 between the first and last quarter second, the camera was bumped or blocked: `lost: camera moved`.
+2. **Rest spot.** The address pose's ankles set a band from 0.06 frame heights above them to 0.07 below. The ball at rest is a spot in that band that is ball colored in the median of the frames before impact and gone from the median of the frames after it. Yellow is `(R + G) / 2 - B`; when no yellow ball is found, white is the darkest of the three channels. The spot has to be round, between 0.1 and 0.35 foot lengths across (heel to toe from the pose, so the limit holds at any camera distance), off both feet, and not behind the heels when the toes point sideways in the picture. Face-on the toes point at the camera and the ball between the feet is allowed.
+3. **Chain.** In each frame, blobs of 2 to 120px that stand out from the window's median in the ball's color. A chain starts within 40px sideways and 150px above the rest spot, from 4 frames before impact to 10 after, and steps to the nearest blob no lower than the last point, at most 60px higher and 40px sideways, with gaps of up to 4 frames. The golfer's side of a line 0.22 frame widths from the rest spot is masked. The longest chain that rises more than 40px over its first five points wins. Leading points still at the rest spot are dropped except the last.
+4. **Metrics** from the first chain point and the tenth after it: `ball_px_per_frame` (distance over frames), `start_dir` (sideways over up, negative is left of the camera line), `impact_frame` (the first point) and `rise_px` (first point to last).
+5. **Grade** within the session: good at `GOLF_BALL_GOOD` (0.9) times the median speed of the tracked swings or more, poor under `GOLF_BALL_POOR` (0.78) times it, fair between. Pixels per frame depend on camera distance and frame rate, so speeds are never compared across sessions. Start direction is reported, not graded, until there is a target line in the picture.
+
+A swing that cannot be followed gets a `lost:` reason and no numbers or grade: `no golfer at address`, `clip under 100fps` (at 30fps the ball is out of frame three frames after impact), `camera moved`, `no ball launched` (no ball, or a practice swing next to one), `ball lost after launch`, or `tracking error` (logged; the rest of the swing is still written). `swing-NN/ball.json` keeps the metrics, the chain points and the thresholds so a later run can re-grade without decoding video. Tracking takes about 1.5s per swing.
+
+On the 2026-10-16 range session (33 clips, 120fps, two camera spots, yellow and white balls) it followed all 26 real shots and gave a lost reason for the 7 that were not shots, and its grades matched the golfer's calls on the six swings he named.
 
 ### Drive storage
 - Originals are removed with `files.delete` (permanent) after the session is in place. Trashed files still count against quota.
@@ -159,18 +178,28 @@ A video is identified by its Drive checksum, not its filename. One video maps to
 - **Crash while replacing a session**: the previous session folder stays intact and readable.
 
 ### Swing detection
-Swings are found by audio onsets confirmed by fast hands at the sound.
+Swings are found by audio onsets confirmed by fast hands at hip height at the sound.
 - **Range session with neighboring bays**: each of the owner's swings is emitted separately, and unconfirmed onsets are listed in `session.md` as rejected with timestamps.
 - **Impact timing**: the impact frame is within two frames of the first frame showing the clubface on the ball, on 120fps footage.
+- **Louder sound nearby**: a club tap, waggle, or finish louder than the strike within 8s does not hide the strike.
+- **Phone distance**: hand speed is measured in leg lengths, so the same swing confirms the same way filmed close or far.
 - **Single-swing clip**: a video under 15 seconds emits at most one swing.
 - **No swing found**: the session is written with `session.md` stating zero swings, and it is not a failure.
 
 ### Swing frames for Claude
 Each swing gets a clip and labeled JPEGs decoded from the original video, 2560px long edge or smaller and never upscaled.
-- **Detected swing**: the folder contains `clip.mp4` and `01-address.jpg` through `06-sequence.jpg`, each JPEG sRGB and labeled with position and timestamp.
+- **Detected swing**: the folder contains `clip.mp4`, `pose.csv`, and `01-address.jpg` through `06-sequence.jpg`, each JPEG sRGB and labeled with position and timestamp.
+- **Phone review**: each swing has `06-sequence-small.jpg` under 72,000 bytes, and the session has `session.zip` with `session.md`, the small sheets, and the small text files.
 - **Impact zoom**: `05-impact-zoom.jpg` shows a native-resolution band at ball height for the frames before, at, and after impact, with the ball in it from either camera angle.
 - **iPhone footage**: HDR, portrait, APAC-plus-AAC `.mov` files process like any other video, with natural color.
 - **Blurry target frame**: for address, top, and finish, a sharper frame within two frames is used instead.
+
+### Ball flight grade
+Each swing's ball flight is graded against the session in `session.md`, so a review can rank swings from text alone.
+- **Tracked swing**: the swing's row has ball px/frame, start direction, a grade and `ok`, and `ball.json` has the chain points.
+- **Yellow dot test**: a synthetic clip with a ball launched at a known speed returns that speed within 5%.
+- **Untracked swing**: the row has a `lost:` reason and empty metric cells, never a guessed grade.
+- **Size**: `session.md` stays under 50KB so it reads through the Drive connector in one call.
 
 ### Drive storage bounds
 - **Original after success**: permanently deleted, not trashed.

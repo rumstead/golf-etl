@@ -10,6 +10,7 @@ SAMPLE_RATE = 48000  # iPhone audio is 48kHz; downsampling smears the transient
 HOP = 128
 CHUNK_S = 30.0  # the envelope is built in chunks so a 20 minute session fits in memory
 OVERLAP_S = 1.0
+MERGE_S = 0.25  # transients closer than this are one sound and its echo
 
 
 @dataclass(frozen=True)
@@ -18,32 +19,25 @@ class Onset:
     strength: float  # 0..1, relative to the strongest onset in the video
 
 
-@dataclass(frozen=True)
-class Onsets:
-    kept: list[Onset]
-    suppressed: list[Onset]  # within min_gap_s of a stronger onset
-
-
 def find_onsets(
     samples: np.ndarray,
     sr: int,
     highpass_hz: float,
     delta: float,
-    min_gap_s: float,
     lag_s: float = 0.0,
     chunk_s: float = CHUNK_S,
-) -> Onsets:
-    """Onsets in time order, keeping only the strongest within any min_gap_s span.
+) -> list[Onset]:
+    """Every sound in time order, keeping only the strongest within MERGE_S.
 
     Times are backtracked from the envelope peak to where the transient starts, then moved
     earlier by lag_s (sound travel to the phone plus the phone's own audio/video offset).
     """
     if samples.size < sr // 10:
-        return Onsets([], [])
+        return []
     env = _envelope(samples, sr, highpass_hz, chunk_s)
     peak = float(env.max())
     if peak <= 0:
-        return Onsets([], [])
+        return []
     env = env / peak
     peaks = librosa.onset.onset_detect(
         onset_envelope=env, sr=sr, hop_length=HOP, units="frames", normalize=False, delta=delta
@@ -56,13 +50,10 @@ def find_onsets(
         reverse=True,
     )
     kept: list[Onset] = []
-    suppressed: list[Onset] = []
     for onset in candidates:
-        if all(abs(onset.time_s - k.time_s) >= min_gap_s for k in kept):
+        if all(abs(onset.time_s - k.time_s) >= MERGE_S for k in kept):
             kept.append(onset)
-        else:
-            suppressed.append(onset)
-    return Onsets(sorted(kept, key=lambda o: o.time_s), sorted(suppressed, key=lambda o: o.time_s))
+    return sorted(kept, key=lambda o: o.time_s)
 
 
 def _envelope(samples: np.ndarray, sr: int, highpass_hz: float, chunk_s: float) -> np.ndarray:

@@ -1,3 +1,5 @@
+import json
+import zipfile
 from datetime import UTC, datetime
 
 import pytest
@@ -17,9 +19,12 @@ EXPECTED = [
     "03-impact.jpg",
     "04-finish.jpg",
     "05-impact-zoom.jpg",
+    "06-sequence-small.jpg",
     "06-sequence.jpg",
     "07-after-shot.jpg",
+    "ball.json",
     "clip.mp4",
+    "pose.csv",
 ]
 
 
@@ -37,7 +42,15 @@ def test_swing_folder_has_every_file_sized_for_claude(tmp_path):
     )
     swing = result.session_dir / "swing-01"
     assert sorted(p.name for p in swing.iterdir()) == EXPECTED
-    for name in EXPECTED[:-1]:
+    assert (swing / "06-sequence-small.jpg").stat().st_size <= Settings().small_max_bytes
+    with zipfile.ZipFile(result.session_dir / "session.zip") as z:
+        assert sorted(z.namelist()) == [
+            "session.md",
+            "swing-01/06-sequence-small.jpg",
+            "swing-01/ball.json",
+            "swing-01/pose.csv",
+        ]
+    for name in (n for n in EXPECTED if n.endswith(".jpg")):
         with Image.open(swing / name) as img:
             assert max(img.size) <= 2560
             assert img.size[0] * img.size[1] <= 3_700_000
@@ -49,6 +62,22 @@ def test_swing_folder_has_every_file_sized_for_claude(tmp_path):
     with Image.open(swing / "06-sequence.jpg") as img:
         assert img.size == (2560, 720)  # two rows of four 640x360 cells
     assert result.swings == 1
+    # a test pattern has no ball, so the row says why instead of a grade
+    ball = json.loads((swing / "ball.json").read_text())
+    assert ball["track"].startswith("lost: ")
+    row = next(
+        r
+        for r in (result.session_dir / "session.md").read_text().splitlines()
+        if r.startswith("| swing-01")
+    )
+    assert row.endswith(f"| {ball['track']} |")
+    assert (
+        "Ball flight: 0 good, 0 fair, 0 poor, 1 not tracked"
+        in (result.session_dir / "session.md").read_text()
+    )
+    # the clip starts at 1.5s (impact 4.0s minus 2.5s), so impact is clip frame 75 at 30fps
+    assert "| swing-01 |" in (result.session_dir / "session.md").read_text().split("## Timing")[1]
+    assert "| 75 (4.00s) |" in (result.session_dir / "session.md").read_text()
 
 
 def test_video_without_a_person_writes_a_zero_swing_session(tmp_path):

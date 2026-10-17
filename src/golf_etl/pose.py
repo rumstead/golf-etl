@@ -1,15 +1,36 @@
 """Pose tracking with MediaPipe Pose Landmarker, reduced to what swing analysis needs."""
 
+import csv
 from collections.abc import Iterable
 from dataclasses import dataclass
+from pathlib import Path
 
 import mediapipe as mp
 import numpy as np
 from mediapipe.tasks.python import BaseOptions, vision
 
+LEFT_SHOULDER, RIGHT_SHOULDER = 11, 12
 LEFT_WRIST, RIGHT_WRIST = 15, 16
+LEFT_HIP, RIGHT_HIP = 23, 24
 LEFT_ANKLE, RIGHT_ANKLE = 27, 28
+LEFT_HEEL, RIGHT_HEEL = 29, 30
+LEFT_FOOT_INDEX, RIGHT_FOOT_INDEX = 31, 32
 NUM_LANDMARKS = 33
+
+# MediaPipe landmark index of each joint written to pose.csv
+CSV_JOINTS = {
+    "nose": 0,
+    "left_shoulder": 11,
+    "right_shoulder": 12,
+    "left_wrist": LEFT_WRIST,
+    "right_wrist": RIGHT_WRIST,
+    "left_hip": LEFT_HIP,
+    "right_hip": RIGHT_HIP,
+    "left_knee": 25,
+    "right_knee": 26,
+    "left_heel": 29,
+    "right_heel": 30,
+}
 
 
 @dataclass(frozen=True)
@@ -41,6 +62,48 @@ class PoseTrack:
     def hand_height(self) -> np.ndarray:
         """(n,) hand height, larger is higher (image y grows downward)."""
         return -self.hands()[:, 1]
+
+    def hands_below_hips(self) -> np.ndarray:
+        """(n,) how far the hands sit below the hips, in frame heights; negative is above."""
+        hips = (self.landmarks[:, LEFT_HIP, 1] + self.landmarks[:, RIGHT_HIP, 1]) / 2
+        return self.hands()[:, 1] - hips
+
+    def hands_below_shoulders(self) -> np.ndarray:
+        """(n,) how far the hands sit below the shoulders, in frame heights; negative is above."""
+        shoulders = (self.landmarks[:, LEFT_SHOULDER, 1] + self.landmarks[:, RIGHT_SHOULDER, 1]) / 2
+        return self.hands()[:, 1] - shoulders
+
+    def leg_length(self) -> float:
+        """Median hip to ankle height in frame heights, NaN when the legs are never seen. It
+        scales with how big the golfer is in frame, so speeds divided by it do not depend on
+        where the phone is."""
+        y = self.landmarks[:, :, 1]
+        legs = (y[:, LEFT_ANKLE] + y[:, RIGHT_ANKLE]) / 2 - (y[:, LEFT_HIP] + y[:, RIGHT_HIP]) / 2
+        if np.all(np.isnan(legs)):
+            return float("nan")
+        return float(np.nanmedian(legs))
+
+
+def write_pose_csv(
+    track: PoseTrack, path: Path, impact_s: float, clip_start_s: float, clip_fps: float
+) -> None:
+    """One row per pose sample: video time, ms from impact, the nearest clip.mp4 frame, then
+    x, y (fractions of the frame, top left is 0, 0) and visibility per joint. A sample with
+    no pose leaves its joint cells empty."""
+    header = ["time_s", "t_ms", "clip_frame"]
+    header += [f"{name}_{axis}" for name in CSV_JOINTS for axis in ("x", "y", "vis")]
+    idx = list(CSV_JOINTS.values())
+    with path.open("w", newline="") as fh:
+        out = csv.writer(fh)
+        out.writerow(header)
+        for t, lm in zip(track.times, track.landmarks, strict=True):
+            row = [
+                f"{t:.3f}",
+                round((t - impact_s) * 1000),
+                max(0, round((t - clip_start_s) * clip_fps)),
+            ]
+            row += ["" if np.isnan(v) else f"{v:.3f}" for v in lm[idx].ravel()]
+            out.writerow(row)
 
 
 class PoseEstimator:

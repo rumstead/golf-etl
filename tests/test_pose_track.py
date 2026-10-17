@@ -1,6 +1,9 @@
+import csv
+
 import numpy as np
 import pytest
 
+from golf_etl.pose import write_pose_csv
 from tests.poses import still_track, swing_track
 
 
@@ -32,3 +35,48 @@ def test_missing_pose_is_nan_speed():
     speed = track.hand_speed()
     gap = (track.times > 8.05) & (track.times < 8.45)
     assert np.all(np.isnan(speed[gap]))
+
+
+def read_csv(path):
+    with path.open(newline="") as fh:
+        return list(csv.DictReader(fh))
+
+
+def test_pose_csv_has_one_row_per_sample_and_the_named_joints(tmp_path):
+    track = swing_track(10.0, fps=60)
+    path = tmp_path / "pose.csv"
+    write_pose_csv(track, path, impact_s=10.0, clip_start_s=7.5, clip_fps=120)
+    rows = read_csv(path)
+    assert len(rows) == len(track.times)
+    assert list(rows[0])[:3] == ["time_s", "t_ms", "clip_frame"]
+    for joint in ("nose", "left_shoulder", "right_wrist", "left_hip", "right_knee", "left_heel"):
+        assert {f"{joint}_x", f"{joint}_y", f"{joint}_vis"} <= set(rows[0])
+    assert float(rows[0]["left_wrist_y"]) == pytest.approx(0.6, abs=0.001)
+
+
+def test_pose_csv_times_are_relative_to_impact_and_the_clip(tmp_path):
+    track = swing_track(10.0, fps=60)
+    path = tmp_path / "pose.csv"
+    write_pose_csv(track, path, impact_s=10.0, clip_start_s=7.5, clip_fps=120)
+    rows = read_csv(path)
+    assert float(rows[0]["time_s"]) == pytest.approx(7.5, abs=0.001)
+    assert int(rows[0]["t_ms"]) == -2500
+    assert int(rows[0]["clip_frame"]) == 0
+    assert int(rows[150]["t_ms"]) == 0  # 2.5s in at 60fps
+    assert int(rows[150]["clip_frame"]) == 300  # 2.5s in at 120fps
+
+
+def test_pose_csv_leaves_cells_empty_without_a_pose(tmp_path):
+    track = swing_track(10.0, fps=60, missing=(9.0, 9.5))
+    path = tmp_path / "pose.csv"
+    write_pose_csv(track, path, impact_s=10.0, clip_start_s=7.5, clip_fps=120)
+    rows = read_csv(path)
+    gap = [r for r in rows if 9.05 <= float(r["time_s"]) < 9.45]
+    assert gap and all(r["nose_x"] == "" and r["left_heel_vis"] == "" for r in gap)
+    assert "nan" not in path.read_text().lower()
+
+
+def test_pose_csv_for_a_4s_clip_reads_in_one_drive_call(tmp_path):
+    path = tmp_path / "pose.csv"
+    write_pose_csv(swing_track(10.0, fps=60), path, impact_s=10.0, clip_start_s=7.5, clip_fps=120)
+    assert path.stat().st_size < 80_000

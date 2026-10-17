@@ -13,8 +13,12 @@ class Settings:
     onset_delta: float = 0.2
     onset_min_gap_s: float = 8.0
     impact_audio_lag_ms: float = 12.0
-    confirm_window_ms: int = 300
-    confirm_min_speed: float = 1.0
+    confirm_window_ms: int = 200
+    confirm_min_speed: float = 4.0  # leg lengths (hip to ankle height) per second
+    # at the sound the hands are about level with the hips: higher is the top or the finish,
+    # lower is a waggle at address. In leg lengths below the hips.
+    confirm_hands_min: float = -0.15
+    confirm_hands_max: float = 0.25
     short_clip_s: float = 15.0
     pose_long_edge: int = 640
     pose_max_fps: float = 60.0
@@ -24,12 +28,20 @@ class Settings:
     post_impact_s: float = 1.5
     after_shot_s: float = 8.0  # simulators show the shot's final numbers by about 8s
     still_speed: float = 0.15
+    transition_s: float = 0.1  # the transition panel, this long before impact
+    follow_through_s: float = 0.15  # the follow-through panel, this long after impact
     sharpness_radius: int = 2
     frame_long_edge: int = 2560
     frame_max_pixels: int = 3_700_000  # Claude reads up to about 3.75MP
     jpeg_quality: int = 90
+    # the Drive connector returns at most about 100,000 characters per read, and base64 makes
+    # a file 4/3 larger, so phone copies stay under this
+    small_max_bytes: int = 72_000
     clip_long_edge: int = 1920
     clip_crf: int = 23
+    # ball flight grade, as fractions of the session's median ball speed
+    ball_good: float = 0.9
+    ball_poor: float = 0.78
     # drive
     remote: str = "gdrive:golf"  # rclone remote and folder; a local path works too
     max_attempts: int = 3

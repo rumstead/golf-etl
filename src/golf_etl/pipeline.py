@@ -1,5 +1,6 @@
 """One video in, one session folder out."""
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -8,15 +9,17 @@ from pathlib import Path
 import numpy as np
 
 from golf_etl import render
-from golf_etl.audio import SAMPLE_RATE, Onsets, find_onsets
+from golf_etl.audio import SAMPLE_RATE, Onset, find_onsets
+from golf_etl.ball import BallFlight, grade, track_ball, write_ball_json
 from golf_etl.config import Settings
 from golf_etl.detect import Detection, Rejected, Swing, detect_swings
-from golf_etl.frames import after_shot_time, pick_positions, sharpest
+from golf_etl.frames import Timing, after_shot_time, pick_positions, sharpest, swing_timing
 from golf_etl.media import VideoInfo, encode_clip, probe, read_audio, read_frames
-from golf_etl.pose import PoseEstimator
-from golf_etl.session import SessionSummary, session_id, write_session_md
+from golf_etl.pose import PoseEstimator, write_pose_csv
+from golf_etl.session import SessionSummary, session_id, write_session_md, write_session_zip
 
 Detector = Callable[[Path, VideoInfo, Settings], Detection]
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -28,7 +31,7 @@ class SessionResult:
 
 
 def detect_video(video: Path, info: VideoInfo, cfg: Settings) -> Detection:
-    onsets = Onsets([], [])
+    onsets: list[Onset] = []
     if info.has_audio:
         samples = read_audio(video, info, SAMPLE_RATE)
         onsets = find_onsets(
@@ -36,23 +39,15 @@ def detect_video(video: Path, info: VideoInfo, cfg: Settings) -> Detection:
             SAMPLE_RATE,
             cfg.onset_highpass_hz,
             cfg.onset_delta,
-            cfg.onset_min_gap_s,
             cfg.impact_audio_lag_ms / 1000,
         )
     estimator = PoseEstimator(cfg.pose_model_path)
 
-    def track_for(t: float):
-        frames = read_frames(
-            video,
-            info,
-            t - cfg.pre_impact_s,
-            t + cfg.post_impact_s,
-            cfg.pose_long_edge,
-            cfg.pose_max_fps,
-        )
+    def track_for(start_s: float, end_s: float):
+        frames = read_frames(video, info, start_s, end_s, cfg.pose_long_edge, cfg.pose_max_fps)
         return estimator.track(frames)
 
-    return detect_swings(onsets.kept, track_for, info.duration_s, cfg, onsets.suppressed)
+    return detect_swings(onsets, track_for, info.duration_s, cfg)
 
 
 def process_video(
@@ -73,9 +68,23 @@ def process_video(
     session_dir = out_root / sid
     session_dir.mkdir(parents=True, exist_ok=True)
     impacts = [s.impact_s for s in detection.swings]
+    balls, timings = [], []
     for n, swing in enumerate(detection.swings, 1):
         next_impact = impacts[n] if n < len(impacts) else None
-        write_swing(video, info, swing, session_dir / f"swing-{n:02d}", cfg, next_impact)
+        flight, timing = write_swing(
+            video, info, swing, session_dir / f"swing-{n:02d}", cfg, next_impact
+        )
+        balls.append(flight)
+        timings.append(timing)
+    balls, ball_median = grade(balls, cfg.ball_good, cfg.ball_poor)
+    for n, flight in enumerate(balls, 1):
+        write_ball_json(
+            session_dir / f"swing-{n:02d}" / "ball.json",
+            flight,
+            median=ball_median,
+            good=cfg.ball_good,
+            poor=cfg.ball_poor,
+        )
     write_session_md(
         session_dir / "session.md",
         SessionSummary(
@@ -87,8 +96,13 @@ def process_video(
             swings=detection.swings,
             rejected=detection.rejected,
             duplicates=duplicates or [],
+            balls=balls,
+            ball_median=ball_median,
+            timings=timings,
         ),
     )
+    if detection.swings:
+        write_session_zip(session_dir)  # last, so it picks up every other file
     return SessionResult(sid, session_dir, len(detection.swings), detection.rejected)
 
 
@@ -99,9 +113,12 @@ def write_swing(
     out: Path,
     cfg: Settings,
     next_impact_s: float | None = None,
-) -> None:
+) -> tuple[BallFlight, Timing]:
+    """Write the swing's frames and clip, follow the ball in the clip, and time the swing."""
     out.mkdir(parents=True, exist_ok=True)
-    positions = pick_positions(swing.track, swing.impact_s, cfg.still_speed)
+    positions = pick_positions(
+        swing.track, swing.impact_s, cfg.still_speed, cfg.transition_s, cfg.follow_through_s
+    )
     dt = 1 / info.fps
     picked: dict[str, tuple[float, np.ndarray]] = {}
     impact_frames: list[np.ndarray] = []
@@ -142,6 +159,11 @@ def write_swing(
         labels.append(f"{name} {ft:.2f}s")
     sheet = render.grid(overlays, labels, 4, cfg.frame_long_edge, cfg.frame_max_pixels)
     render.save_jpeg(sheet, out / "06-sequence.jpg", cfg.jpeg_quality)
+    render.save_jpeg_within(
+        lambda edge: render.grid(overlays, labels, 4, edge, cfg.frame_max_pixels),
+        out / "06-sequence-small.jpg",
+        cfg.small_max_bytes,
+    )
 
     # On a simulator or launch monitor the screen shows this shot's numbers only seconds
     # after impact; every earlier frame shows the previous shot's.
@@ -157,12 +179,22 @@ def write_swing(
         render.label(frame, f"after shot {ft:.2f}s"), out / "07-after-shot.jpg", cfg.jpeg_quality
     )
 
+    clip_start = max(0.0, swing.impact_s - cfg.pre_impact_s)
     encode_clip(
         video,
         info,
-        swing.impact_s - cfg.pre_impact_s,
+        clip_start,
         swing.impact_s + cfg.post_impact_s,
         out / "clip.mp4",
         cfg.clip_long_edge,
         cfg.clip_crf,
     )
+    write_pose_csv(swing.track, out / "pose.csv", swing.impact_s, clip_start, info.fps)
+    timing = swing_timing(positions, clip_start, info.fps)
+    try:
+        flight = track_ball(out / "clip.mp4", swing.impact_s - clip_start, address_pose)
+    except Exception:
+        # a tracking bug costs this swing its grade, not the whole session
+        log.exception("ball tracking failed for %s", out.name)
+        flight = BallFlight("lost: tracking error")
+    return flight, timing

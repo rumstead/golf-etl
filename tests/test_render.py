@@ -76,3 +76,27 @@ def test_save_jpeg_is_rgb_without_exif(tmp_path):
         assert img.mode == "RGB"
         assert img.format == "JPEG"
         assert not img.getexif()
+
+
+def test_small_jpeg_fits_the_byte_budget(tmp_path):
+    noise = np.random.default_rng(0).integers(0, 256, (1812, 2040, 3), np.uint8)
+    path = tmp_path / "small.jpg"
+    render.save_jpeg_within(lambda edge: render.fit(noise, edge), path, 72_000)
+    assert path.stat().st_size <= 72_000
+    with Image.open(path) as img:
+        assert img.mode == "RGB"
+
+
+def test_small_jpeg_keeps_the_largest_size_that_fits(tmp_path):
+    path = tmp_path / "small.jpg"
+    edge, quality = render.save_jpeg_within(
+        lambda edge: render.fit(frame(1812, 2040), edge), path, 72_000
+    )
+    assert (edge, quality) == (render.SMALL_LONG_EDGES[0], render.SMALL_QUALITIES[0])
+    with Image.open(path) as img:
+        assert max(img.size) == render.SMALL_LONG_EDGES[0]
+
+
+def test_small_jpeg_raises_when_nothing_fits(tmp_path):
+    with pytest.raises(RuntimeError, match="does not fit"):
+        render.save_jpeg_within(lambda edge: render.fit(frame(), edge), tmp_path / "x.jpg", 100)
