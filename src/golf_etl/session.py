@@ -67,6 +67,15 @@ class SessionSummary:
     timings: list[Timing] = field(default_factory=list)  # one per swing, in order
 
 
+def video_time(t: float) -> str:
+    """A time in the video, read like the Photos scrubber: seconds, then minutes past a minute."""
+    if t < 60:
+        return f"{t:.2f}s"
+    tenths = round(t * 10)
+    m, rem = divmod(tenths, 600)
+    return f"{m}:{rem / 10:04.1f}"
+
+
 def _cell(value: float | None, fmt: str) -> str:
     return "" if value is None else format(value, fmt)
 
@@ -92,7 +101,7 @@ def write_session_md(path: Path, s: SessionSummary) -> None:
         for n, (swing, b) in enumerate(zip(s.swings, s.balls, strict=True), 1):
             cells = [
                 f"swing-{n:02d}",
-                f"{swing.impact_s:.2f}s",
+                video_time(swing.impact_s),
                 f"{swing.strength:.2f}",
                 f"{swing.peak_offset_ms:+.0f}ms",
                 _cell(b.ball_px_per_frame, ".1f"),
@@ -106,7 +115,7 @@ def write_session_md(path: Path, s: SessionSummary) -> None:
         lines += ["| Swing | Impact | Strength | Hand speed peak |", "|---|---|---|---|"]
         for n, swing in enumerate(s.swings, 1):
             lines.append(
-                f"| swing-{n:02d} | {swing.impact_s:.2f}s | {swing.strength:.2f} "
+                f"| swing-{n:02d} | {video_time(swing.impact_s)} | {swing.strength:.2f} "
                 f"| {swing.peak_offset_ms:+.0f}ms |"
             )
     else:
@@ -120,17 +129,17 @@ def write_session_md(path: Path, s: SessionSummary) -> None:
             "|---|---|---|---|---|---|---|",
         ]
         for n, t in enumerate(s.timings, 1):
-            start = f"{t.takeaway_start_frame} ({t.takeaway_start_s:.2f}s)"
-            impact = f"{t.impact_frame} ({t.impact_s:.2f}s)"
+            start = f"{t.takeaway_start_frame} ({video_time(t.takeaway_start_s)})"
+            impact = f"{t.impact_frame} ({video_time(t.impact_s)})"
             if t.top_in_frame:
-                top = f"{t.top_frame} ({t.top_s:.2f}s)"
+                top = f"{t.top_frame} ({video_time(t.top_s)})"
                 durations = f"{t.backswing_s:.2f}s | {t.downswing_s:.2f}s | {t.tempo:.1f}"
             else:
                 top, durations = "hands not seen at the top", "| |"
             lines.append(f"| swing-{n:02d} | {start} | {top} | {impact} | {durations} |")
     if s.rejected:
         lines += ["", "## Rejected candidates", "", "| Time | Strength | Reason |", "|---|---|---|"]
-        lines += [f"| {r.time_s:.2f}s | {r.strength:.2f} | {r.reason} |" for r in s.rejected]
+        lines += [f"| {video_time(r.time_s)} | {r.strength:.2f} | {r.reason} |" for r in s.rejected]
     if s.duplicates:
         lines += ["", "## Removed duplicates", ""] + [f"- {name}" for name in s.duplicates]
     path.write_text("\n".join(lines) + "\n")
