@@ -1,3 +1,4 @@
+import hashlib
 import json
 from datetime import timedelta
 from pathlib import Path
@@ -7,7 +8,8 @@ import pytest
 from golf_etl.config import Settings
 from golf_etl.pipeline import SessionResult
 from golf_etl.storage.poller import Poller
-from golf_etl.storage.retention import sweep
+from golf_etl.storage.publish import DrivePublisher
+from golf_etl.storage.retention import sweep_sessions
 from golf_etl.storage.store import STATE, State
 from tests.fake_store import FakeStore
 
@@ -40,7 +42,14 @@ def env(tmp_path):
     process = FakeProcess()
 
     def run():
-        return Poller(store, Settings(), process, tmp_path / "scratch", "test").run()
+        return Poller(
+            store,
+            DrivePublisher(store, Settings()),
+            Settings(),
+            process,
+            tmp_path / "scratch",
+            "test",
+        ).run()
 
     return store, process, run
 
@@ -50,15 +59,13 @@ def sessions(store):
 
 
 def attempts(store, name_data: bytes) -> int:
-    import hashlib
-
     return State.load(store).attempts.get(hashlib.sha256(name_data).hexdigest(), 0)
 
 
 def test_first_run_creates_the_folder_layout(env):
     store, process, run = env
     run()
-    assert {"inbox", "processing", "failed", "sessions"} <= set(store.dirs)
+    assert {"inbox", "processing", "failed"} <= set(store.dirs)
 
 
 def test_video_becomes_a_session_and_the_original_is_deleted(env):
@@ -165,8 +172,6 @@ def test_recovery_counts_as_an_attempt(env):
 
 def test_recovered_video_past_the_limit_goes_to_failed(env):
     store, process, run = env
-    import hashlib
-
     store.write_text(STATE, json.dumps({"attempts": {hashlib.sha256(b"x").hexdigest(): 2}}))
     store.add_video("IMG_1.MOV", folder="processing", data=b"x")
     assert run().failed == ["IMG_1.MOV"]
@@ -228,7 +233,7 @@ def test_crash_between_the_swap_renames_then_a_failed_upload_keeps_a_session(env
     store.add_video("IMG_1.MOV", data=b"same")
     run()
     monkeypatch.setattr(store, "upload_tree", real_upload)
-    sweep(store, Settings(), store.now + timedelta(days=2))
+    sweep_sessions(store, Settings(), store.now + timedelta(days=2))
     assert f"sessions/{sid}/swing-01/01-address.jpg" in store.tree()
 
 
@@ -261,3 +266,24 @@ def test_awkward_filenames_survive_the_round_trip(env):
     run()
     run()
     assert store.names_in("failed") == sorted([name, f"{name}.error.txt"])
+
+
+def test_poller_publishes_through_the_publisher(tmp_path):
+    class Recorder:
+        def __init__(self):
+            self.calls = []
+
+        def publish(self, session_dir, session_id, marker):
+            self.calls.append(
+                (session_id, marker["sha256"], sorted(p.name for p in session_dir.iterdir()))
+            )
+
+        def sweep(self, now):
+            raise AssertionError("the poller does not sweep")
+
+    store, rec = FakeStore(), Recorder()
+    store.add_video("a.mov", data=b"aaa")
+    Poller(store, rec, Settings(), FakeProcess(), tmp_path / "s", "test").run()
+    sha = hashlib.sha256(b"aaa").hexdigest()
+    assert rec.calls == [(f"2026-10-04-1200-{sha[:8]}", sha, ["session.md", "swing-01"])]
+    assert store.names_in("sessions") == []

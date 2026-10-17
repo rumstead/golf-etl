@@ -62,7 +62,7 @@ class Store(Protocol):
 
 
 def ensure_layout(store: Store) -> None:
-    for folder in (INBOX, PROCESSING, FAILED, SESSIONS):
+    for folder in (INBOX, PROCESSING, FAILED):
         store.mkdir(folder)
 
 

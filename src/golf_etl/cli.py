@@ -53,19 +53,28 @@ def cmd_eval(args, cfg: Settings) -> int:
 def cmd_poll(args, cfg: Settings) -> int:
     from golf_etl.pipeline import process_video
     from golf_etl.storage.poller import Poller
+    from golf_etl.storage.publish import DrivePublisher
     from golf_etl.storage.rclone import RcloneStore
-    from golf_etl.storage.retention import sweep
+    from golf_etl.storage.retention import sweep_failed
 
     if cfg.remote.startswith("gdrive:") and not os.environ.get("RCLONE_CONFIG_GDRIVE_TOKEN"):
         print("missing environment variable RCLONE_CONFIG_GDRIVE_TOKEN", file=sys.stderr)
         return 2
     version = os.environ.get("GOLF_ETL_VERSION", "dev")
     store = RcloneStore(cfg.remote)
+    publisher = DrivePublisher(store, cfg)
     process = functools.partial(process_video, cfg=cfg, version=version)
-    report = Poller(store, cfg, process, Path(cfg.scratch_dir), version).run()
+    report = Poller(store, publisher, cfg, process, Path(cfg.scratch_dir), version).run()
     log.info("poll: %s", report)
-    swept = sweep(store, cfg, datetime.now(UTC))
-    log.info("sweep: deleted %d, %d bytes in sessions", len(swept.deleted), swept.bytes_after)
+    now = datetime.now(UTC)
+    failed = sweep_failed(store, cfg, now)
+    swept = publisher.sweep(now)
+    log.info(
+        "sweep: deleted %d failed originals and %d session files, %d bytes in sessions",
+        len(failed.deleted),
+        len(swept.deleted),
+        swept.bytes_after,
+    )
     return 0
 
 

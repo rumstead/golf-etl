@@ -22,20 +22,25 @@ class SweepReport:
     bytes_after: int = 0
 
 
-def sweep(store: Store, cfg: Settings, now: datetime) -> SweepReport:
+def sweep_failed(store: Store, cfg: Settings, now: datetime) -> SweepReport:
     report = SweepReport()
-
-    def delete(path: str) -> None:
-        store.delete(path)
-        report.deleted.append(PurePosixPath(path).name)
-
     # Failed originals age from their error file: a video's own time is when it was shot.
     failed = store.list(FAILED)
     errors = {e.name.removesuffix(".error.txt"): e for e in failed if e.name.endswith(".error.txt")}
     for e in failed:
         stamp = errors.get(e.name.removesuffix(".error.txt"), e).modified
         if now - stamp > timedelta(days=cfg.failed_ttl_days):
-            delete(e.path)
+            store.delete(e.path)
+            report.deleted.append(e.name)
+    return report
+
+
+def sweep_sessions(store: Store, cfg: Settings, now: datetime) -> SweepReport:
+    report = SweepReport()
+
+    def delete(path: str) -> None:
+        store.delete(path)
+        report.deleted.append(PurePosixPath(path).name)
 
     entries = store.list(SESSIONS, recursive=True)
     top = [e for e in entries if e.is_dir and "/" not in e.path[len(SESSIONS) + 1 :]]

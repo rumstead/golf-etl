@@ -26,3 +26,13 @@ def test_unrelated_env_is_ignored():
 def test_bad_value_names_the_variable():
     with pytest.raises(ValueError, match="GOLF_CLIP_TTL_DAYS"):
         Settings.from_env({"GOLF_CLIP_TTL_DAYS": "two weeks"})
+
+
+def test_storage_defaults_to_github():
+    s = Settings()
+    assert (s.storage, s.inbox_root) == ("github", "/data")
+    assert s.sessions_repo == "git@github.com:rumstead/golf-sessions.git"
+
+
+def test_storage_is_overridable():
+    assert Settings.from_env({"GOLF_STORAGE": "drive"}).storage == "drive"
