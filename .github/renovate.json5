@@ -1,0 +1,56 @@
+{
+  // Renovate configuration for golf-etl.
+  // Covers: pip requirements, the Python base image in the Dockerfile, GitHub
+  // Actions in the CI workflow, the rclone release pinned in the Dockerfile, and
+  // the tus-js-client version pinned in the upload page.
+  $schema: 'https://docs.renovatebot.com/renovate-schema.json',
+  extends: [
+    'config:recommended',
+    ':dependencyDashboard',
+  ],
+  timezone: 'America/New_York',
+  schedule: ['before 6am on monday'],
+  prConcurrentLimit: 5,
+  labels: ['dependencies'],
+
+  packageRules: [
+    {
+      // Patch updates merge on their own once CI passes.
+      matchUpdateTypes: ['patch'],
+      automerge: true,
+    },
+    {
+      // Group the remaining non-major pip bumps into one PR.
+      matchManagers: ['pip_requirements'],
+      matchUpdateTypes: ['minor'],
+      groupName: 'python dependencies',
+    },
+    {
+      // Minors and majors need a dashboard approval: MediaPipe and OpenCV
+      // wheels have to exist for the new Python version.
+      matchDatasources: ['docker'],
+      matchPackageNames: ['python'],
+      matchUpdateTypes: ['major', 'minor'],
+      dependencyDashboardApproval: true,
+    },
+  ],
+
+  customManagers: [
+    {
+      // ARG GOLF_RCLONE_VERSION=v1.75.1 in the Dockerfile
+      customType: 'regex',
+      managerFilePatterns: ['/^Dockerfile$/'],
+      matchStrings: ['ARG GOLF_RCLONE_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)'],
+      depNameTemplate: 'rclone/rclone',
+      datasourceTemplate: 'github-releases',
+    },
+    {
+      // tus-js-client@4.3.1 in the upload page
+      customType: 'regex',
+      managerFilePatterns: ['/^src/golf_etl/upload_page/index\\.html$/'],
+      matchStrings: ['tus-js-client@(?<currentValue>\\d+\\.\\d+\\.\\d+)'],
+      depNameTemplate: 'tus-js-client',
+      datasourceTemplate: 'npm',
+    },
+  ],
+}
