@@ -150,6 +150,9 @@ def write_swing(
     strip = np.vstack([render.label(c, n) for c, n in zip(crops, names, strict=True)])
     zoom = render.fit(strip, cfg.frame_long_edge, cfg.frame_max_pixels)
     render.save_jpeg(zoom, out / "05-impact-zoom.jpg", cfg.jpeg_quality)
+    render.save_jpeg_within(
+        lambda edge: render.fit(strip, edge), out / "05-impact-zoom-small.jpg", cfg.small_max_bytes
+    )
 
     overlays, labels = [], []
     for name, _ in positions.sequence():
@@ -175,8 +178,12 @@ def write_swing(
         raise RuntimeError(f"no frames decoded for the after-shot frame at {after:.2f}s")
     ft, img = window[0]
     frame = render.fit(img, cfg.frame_long_edge, cfg.frame_max_pixels)
-    render.save_jpeg(
-        render.label(frame, f"after shot {ft:.2f}s"), out / "07-after-shot.jpg", cfg.jpeg_quality
+    text = f"after shot {ft:.2f}s"
+    render.save_jpeg(render.label(frame, text), out / "07-after-shot.jpg", cfg.jpeg_quality)
+    render.save_jpeg_within(
+        lambda edge: render.label(render.fit(frame, edge), text),
+        out / "07-after-shot-small.jpg",
+        cfg.small_max_bytes,
     )
 
     clip_start = max(0.0, swing.impact_s - cfg.pre_impact_s)

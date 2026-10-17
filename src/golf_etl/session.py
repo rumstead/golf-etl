@@ -22,9 +22,10 @@ shoulder height, so those panels show the same body position on every swing. Tra
 follow-through are the same short time before and after impact on every swing.
 - `05-impact-zoom.jpg` is the ball area at full resolution for the frames just before, at, \
 and after impact, top to bottom. Use it for contact, shaft lean, and strike.
-- `06-sequence-small.jpg` is the same sheet under 72KB, small enough to read through the \
-Drive connector on a phone. `session.zip` holds this file, every small sheet, and the small \
-text files in one download, with no clips or full-size frames.
+- `06-sequence-small.jpg`, `05-impact-zoom-small.jpg`, and `07-after-shot-small.jpg` are \
+the same images under 72KB, small enough to read through the Drive connector. Use them when \
+the full-size image does not open. `session.zip` holds this file, every small image, and the \
+small text files in one download, with no clips or full-size frames.
 - `01-address.jpg` to `04-finish.jpg` are the key positions at full resolution for a closer look.
 - `07-after-shot.jpg` is a full-resolution frame a few seconds after impact. On a simulator \
 or launch monitor its screen shows this shot's numbers (club path, face, speeds, spin, carry). \

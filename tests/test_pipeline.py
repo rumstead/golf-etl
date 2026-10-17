@@ -18,9 +18,11 @@ EXPECTED = [
     "02-top.jpg",
     "03-impact.jpg",
     "04-finish.jpg",
+    "05-impact-zoom-small.jpg",
     "05-impact-zoom.jpg",
     "06-sequence-small.jpg",
     "06-sequence.jpg",
+    "07-after-shot-small.jpg",
     "07-after-shot.jpg",
     "ball.json",
     "clip.mp4",
@@ -42,11 +44,14 @@ def test_swing_folder_has_every_file_sized_for_claude(tmp_path):
     )
     swing = result.session_dir / "swing-01"
     assert sorted(p.name for p in swing.iterdir()) == EXPECTED
-    assert (swing / "06-sequence-small.jpg").stat().st_size <= Settings().small_max_bytes
+    for name in (n for n in EXPECTED if n.endswith("-small.jpg")):
+        assert (swing / name).stat().st_size <= Settings().small_max_bytes
     with zipfile.ZipFile(result.session_dir / "session.zip") as z:
         assert sorted(z.namelist()) == [
             "session.md",
+            "swing-01/05-impact-zoom-small.jpg",
             "swing-01/06-sequence-small.jpg",
+            "swing-01/07-after-shot-small.jpg",
             "swing-01/ball.json",
             "swing-01/pose.csv",
         ]
