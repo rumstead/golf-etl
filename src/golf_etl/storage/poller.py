@@ -6,6 +6,7 @@ import traceback
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 
 from golf_etl.config import Settings
@@ -90,6 +91,8 @@ class Poller:
     def handle(self, video: Entry, checksum: str, duplicates: list[str]) -> None:
         claimed = f"{PROCESSING}/{video.name}"
         self.inbox.move(video.path, claimed)
+        self.state.note(video.name, checksum, "processing", datetime.now(UTC))
+        self.state.save(self.inbox)
         log.info("processing %s (%s)", video.name, checksum[:8])
         work = self.scratch / checksum[:16]
         shutil.rmtree(work, ignore_errors=True)
@@ -109,8 +112,11 @@ class Poller:
                 result.session_dir, result.session_id, marker(checksum, video.name, self.version)
             )
             self.inbox.delete(claimed)
-            if self.state.attempts.pop(checksum, None) is not None:
-                self.state.save(self.inbox)
+            self.state.attempts.pop(checksum, None)
+            self.state.note(
+                video.name, checksum, "published", datetime.now(UTC), session=result.session_id
+            )
+            self.state.save(self.inbox)
             self.report.published.append(result.session_id)
             log.info("published %s with %d swings", result.session_id, result.swings)
         except Exception:
@@ -122,8 +128,17 @@ class Poller:
     def attempt_failed(self, path: str, name: str, checksum: str, error: str) -> None:
         attempts = self.state.attempts.get(checksum, 0) + 1
         self.state.attempts[checksum] = attempts
+        last_line = next((ln for ln in reversed(error.splitlines()) if ln.strip()), "")
+        retrying = attempts < self.cfg.max_attempts
+        self.state.note(
+            name,
+            checksum,
+            "retrying" if retrying else "failed",
+            datetime.now(UTC),
+            error=last_line.strip(),
+        )
         self.state.save(self.inbox)
-        if attempts < self.cfg.max_attempts:
+        if retrying:
             self.inbox.move(path, f"{INBOX}/{name}")
             self.report.retrying.append(name)
             log.warning("%s will be retried (attempt %d)", name, attempts)

@@ -287,3 +287,32 @@ def test_poller_publishes_through_the_publisher(tmp_path):
     sha = hashlib.sha256(b"aaa").hexdigest()
     assert rec.calls == [(f"2026-10-04-1200-{sha[:8]}", sha, ["session.md", "swing-01"])]
     assert store.names_in("sessions") == []
+
+
+def test_status_tracks_a_video_from_processing_to_published(env):
+    store, process, run = env
+    store.add_video("a.mov", data=b"aaa")
+    run()
+    [item] = State.load(store).recent
+    assert (item["name"], item["status"]) == ("a.mov", "published")
+    assert item["session"].endswith(hashlib.sha256(b"aaa").hexdigest()[:8])
+
+
+def test_status_shows_retrying_then_failed_with_the_error(env):
+    store, process, run = env
+    store.add_video("bad.mov", data=b"bad")
+    process.fail_on.add("bad.mov")
+    run()
+    assert State.load(store).recent[0]["status"] == "retrying"
+    run()
+    run()
+    item = State.load(store).recent[0]
+    assert item["status"] == "failed" and "cannot decode bad.mov" in item["error"]
+
+
+def test_status_keeps_the_newest_fifty(env):
+    store, process, run = env
+    for i in range(55):
+        store.add_video(f"v{i}.mov", data=f"v{i}".encode())
+    run()
+    assert len(State.load(store).recent) == 50

@@ -66,16 +66,37 @@ def ensure_layout(store: Store) -> None:
         store.mkdir(folder)
 
 
+RECENT_LIMIT = 50
+
+
 @dataclass
 class State:
-    """Retry counts by checksum. Runs never overlap, so one file is enough."""
+    """Retry counts by checksum and the latest status of recent uploads, newest first.
+
+    Runs never overlap, so one file is enough.
+    """
 
     attempts: dict[str, int] = field(default_factory=dict)
+    recent: list[dict] = field(default_factory=list)
 
     @classmethod
     def load(cls, store: Store) -> "State":
         text = store.read_text(STATE)
-        return cls(dict(json.loads(text).get("attempts", {}))) if text else cls()
+        if not text:
+            return cls()
+        data = json.loads(text)
+        return cls(dict(data.get("attempts", {})), list(data.get("recent", [])))
 
     def save(self, store: Store) -> None:
-        store.write_text(STATE, json.dumps({"attempts": self.attempts}, indent=2, sort_keys=True))
+        store.write_text(
+            STATE,
+            json.dumps(
+                {"attempts": self.attempts, "recent": self.recent}, indent=2, sort_keys=True
+            ),
+        )
+
+    def note(self, name: str, sha256: str, status: str, now: datetime, **extra) -> None:
+        """Record a video's latest status, replacing its earlier item and moving it to the front."""
+        item = {"name": name, "sha256": sha256, "status": status, "updated": now.isoformat()}
+        self.recent = [item | extra] + [i for i in self.recent if i["sha256"] != sha256]
+        del self.recent[RECENT_LIMIT:]
