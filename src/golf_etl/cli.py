@@ -107,12 +107,15 @@ def cmd_poll(args, cfg: Settings) -> int:
     now = datetime.now(UTC)
     failed = sweep_failed(store, cfg, now)
     swept = publisher.sweep(now)
-    log.info(
-        "sweep: deleted %d failed originals and %d session files, %d bytes in sessions",
-        len(failed.deleted),
-        len(swept.deleted),
-        swept.bytes_after,
-    )
+    if cfg.storage == "github":
+        log.info("sweep: deleted %d failed originals", len(failed.deleted))
+    else:
+        log.info(
+            "sweep: deleted %d failed originals and %d session files, %d bytes in sessions",
+            len(failed.deleted),
+            len(swept.deleted),
+            swept.bytes_after,
+        )
     return 0
 
 

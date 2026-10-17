@@ -59,6 +59,22 @@ def test_github_poll_without_a_deploy_key_exits_2(monkeypatch, tmp_path, capsys)
     assert str(tmp_path / "missing") in capsys.readouterr().err
 
 
+@pytest.mark.skipif(shutil.which("git") is None, reason="git not installed")
+def test_github_poll_logs_only_the_failed_originals_sweep(remote, tmp_path, monkeypatch, caplog):
+    if shutil.which("rclone") is None:
+        pytest.skip("rclone not installed")
+    data = tmp_path / "data"
+    (data / "inbox").mkdir(parents=True)
+    monkeypatch.delenv("GOLF_STORAGE", raising=False)
+    monkeypatch.setenv("GOLF_INBOX_ROOT", str(data))
+    monkeypatch.setenv("GOLF_SESSIONS_REPO", f"file://{remote}")
+    monkeypatch.setenv("GOLF_SCRATCH_DIR", str(tmp_path / "scratch"))
+    with caplog.at_level("INFO"):
+        assert main(["poll"]) == 0
+    [line] = [r.getMessage() for r in caplog.records if r.getMessage().startswith("sweep:")]
+    assert line == "sweep: deleted 0 failed originals"
+
+
 def test_migrate_drive_without_a_deploy_key_exits_2(monkeypatch, tmp_path, capsys):
     monkeypatch.setenv("GOLF_REMOTE", str(tmp_path / "golf"))
     monkeypatch.delenv("GOLF_SESSIONS_REPO", raising=False)
