@@ -34,6 +34,9 @@ class Settings:
     jpeg_quality: int = 90
     clip_long_edge: int = 1920
     clip_crf: int = 23
+    # ball flight grade, as fractions of the session's median ball speed
+    ball_good: float = 0.9
+    ball_poor: float = 0.78
     # drive
     remote: str = "gdrive:golf"  # rclone remote and folder; a local path works too
     max_attempts: int = 3

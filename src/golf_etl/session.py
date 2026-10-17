@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 
+from golf_etl.ball import BallFlight, summary_line
 from golf_etl.detect import Rejected, Swing
 
 GUIDE = """## How to read this session
@@ -22,6 +23,15 @@ Numbers visible in any other frame belong to the previous shot.
 - The skeleton lines on the sequence sheet are a pose estimate; trust the photo over the lines.
 """
 
+BALL_GUIDE = """\
+- Ball px/frame, Start dir and Grade come from following the ball in `clip.mp4`. Ball px/frame \
+is how fast it leaves the club, in pixels per video frame, so compare it only within this \
+session. Grade compares it to the session median: good is near the median or faster, poor \
+is well under it, fair is between; `ball.json` in each swing folder has the thresholds. \
+Start dir is sideways over up: negative starts left of the camera line, positive right. \
+A `lost:` track says why the ball could not be followed, and that swing has no grade.
+"""
+
 
 def session_id(captured: datetime, checksum: str) -> str:
     return f"{captured:%Y-%m-%d-%H%M}-{checksum[:8]}"
@@ -37,6 +47,12 @@ class SessionSummary:
     swings: list[Swing]
     rejected: list[Rejected]
     duplicates: list[str] = field(default_factory=list)
+    balls: list[BallFlight] = field(default_factory=list)  # one per swing, in swing order
+    ball_median: float | None = None
+
+
+def _cell(value: float | None, fmt: str) -> str:
+    return "" if value is None else format(value, fmt)
 
 
 def write_session_md(path: Path, s: SessionSummary) -> None:
@@ -50,7 +66,26 @@ def write_session_md(path: Path, s: SessionSummary) -> None:
         f"- Swings: {len(s.swings)}",
         "",
     ]
-    if s.swings:
+    if s.swings and s.balls:
+        lines += [GUIDE + BALL_GUIDE, summary_line(s.balls, s.ball_median), ""]
+        lines += [
+            "| Swing | Impact | Strength | Hand speed peak "
+            "| Ball px/frame | Start dir | Grade | Track |",
+            "|---|---|---|---|---|---|---|---|",
+        ]
+        for n, (swing, b) in enumerate(zip(s.swings, s.balls, strict=True), 1):
+            cells = [
+                f"swing-{n:02d}",
+                f"{swing.impact_s:.2f}s",
+                f"{swing.strength:.2f}",
+                f"{swing.peak_offset_ms:+.0f}ms",
+                _cell(b.ball_px_per_frame, ".1f"),
+                _cell(b.start_dir, ".2f"),
+                b.grade or "",
+                b.track,
+            ]
+            lines.append("|" + "|".join(f" {c} " if c else " " for c in cells) + "|")
+    elif s.swings:
         lines += [GUIDE]
         lines += ["| Swing | Impact | Strength | Hand speed peak |", "|---|---|---|---|"]
         for n, swing in enumerate(s.swings, 1):

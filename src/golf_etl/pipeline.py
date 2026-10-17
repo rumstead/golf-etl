@@ -1,5 +1,6 @@
 """One video in, one session folder out."""
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -9,6 +10,7 @@ import numpy as np
 
 from golf_etl import render
 from golf_etl.audio import SAMPLE_RATE, Onset, find_onsets
+from golf_etl.ball import BallFlight, grade, track_ball, write_ball_json
 from golf_etl.config import Settings
 from golf_etl.detect import Detection, Rejected, Swing, detect_swings
 from golf_etl.frames import after_shot_time, pick_positions, sharpest
@@ -17,6 +19,7 @@ from golf_etl.pose import PoseEstimator
 from golf_etl.session import SessionSummary, session_id, write_session_md
 
 Detector = Callable[[Path, VideoInfo, Settings], Detection]
+log = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -65,9 +68,21 @@ def process_video(
     session_dir = out_root / sid
     session_dir.mkdir(parents=True, exist_ok=True)
     impacts = [s.impact_s for s in detection.swings]
+    balls = []
     for n, swing in enumerate(detection.swings, 1):
         next_impact = impacts[n] if n < len(impacts) else None
-        write_swing(video, info, swing, session_dir / f"swing-{n:02d}", cfg, next_impact)
+        balls.append(
+            write_swing(video, info, swing, session_dir / f"swing-{n:02d}", cfg, next_impact)
+        )
+    balls, ball_median = grade(balls, cfg.ball_good, cfg.ball_poor)
+    for n, flight in enumerate(balls, 1):
+        write_ball_json(
+            session_dir / f"swing-{n:02d}" / "ball.json",
+            flight,
+            median=ball_median,
+            good=cfg.ball_good,
+            poor=cfg.ball_poor,
+        )
     write_session_md(
         session_dir / "session.md",
         SessionSummary(
@@ -79,6 +94,8 @@ def process_video(
             swings=detection.swings,
             rejected=detection.rejected,
             duplicates=duplicates or [],
+            balls=balls,
+            ball_median=ball_median,
         ),
     )
     return SessionResult(sid, session_dir, len(detection.swings), detection.rejected)
@@ -91,7 +108,8 @@ def write_swing(
     out: Path,
     cfg: Settings,
     next_impact_s: float | None = None,
-) -> None:
+) -> BallFlight:
+    """Write the swing's frames and clip, and follow the ball in the clip."""
     out.mkdir(parents=True, exist_ok=True)
     positions = pick_positions(swing.track, swing.impact_s, cfg.still_speed)
     dt = 1 / info.fps
@@ -149,12 +167,19 @@ def write_swing(
         render.label(frame, f"after shot {ft:.2f}s"), out / "07-after-shot.jpg", cfg.jpeg_quality
     )
 
+    clip_start = max(0.0, swing.impact_s - cfg.pre_impact_s)
     encode_clip(
         video,
         info,
-        swing.impact_s - cfg.pre_impact_s,
+        clip_start,
         swing.impact_s + cfg.post_impact_s,
         out / "clip.mp4",
         cfg.clip_long_edge,
         cfg.clip_crf,
     )
+    try:
+        return track_ball(out / "clip.mp4", swing.impact_s - clip_start, address_pose)
+    except Exception:
+        # a tracking bug costs this swing its grade, not the whole session
+        log.exception("ball tracking failed for %s", out.name)
+        return BallFlight("lost: tracking error")

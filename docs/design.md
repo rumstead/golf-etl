@@ -31,7 +31,7 @@ phone --share--> Drive golf/inbox/
        2. claim     move the video to processing/
        3. detect    audio onsets, confirmed by fast hands at hip height
        4. slice     impact -2.5s .. +1.5s, re-encoded
-       5. frames    address / top / impact / finish, impact zoom, pose sheet
+       5. frames    address / top / impact / finish, impact zoom, pose sheet, ball flight
        6. publish   write sessions/.tmp-<id>/, swap into sessions/<id>/
        7. delete    original permanently deleted
        8. sweep     TTLs and size cap
@@ -63,6 +63,7 @@ golf/
         05-impact-zoom.jpg
         06-sequence.jpg
         07-after-shot.jpg
+        ball.json
 ```
 Non-video files in `inbox/` are left alone (strike photos will use them later).
 
@@ -104,8 +105,20 @@ All thresholds live in a config module with environment variable overrides (`GOL
   - `05-impact-zoom.jpg`: a native-resolution band at ball height (centered on the ankles, a quarter of the frame tall, the frame width up to 1.2 frame heights) for impact minus 1, impact, and impact plus 1, stacked. The ball sits between the feet face-on but past the toes down the line, so the band covers both instead of guessing
   - `06-sequence.jpg`: the whole swing in one image, two rows of four in reading order: address, takeaway, halfway back, top, transition, impact, follow-through, finish. Takeaway and halfway back sit at a third and two thirds of the time from address to top, transition halfway from top to impact, follow-through halfway from impact to finish. Each panel has the pose skeleton and a label drawn after resizing so it stays legible, and the sheet fits 2560px and 3.7MP
 - `07-after-shot.jpg`: one full-resolution frame `GOLF_AFTER_SHOT_S` (default 8s) after impact, pulled earlier when the next swing's clip window starts sooner and kept inside the video. On a simulator the screen shows the previous shot until about 2s after impact and this shot's final numbers (carry, total) by about 8s, so this is the only frame whose numbers belong to the swing. On the range it is just the golfer after the shot.
-- `session.md` lists source name, capture time, hash, pipeline version, each swing with its impact timestamp and confidence, rejected candidates, and removed duplicates. When there are swings it also carries a short "How to read this session" section naming each file, its order, and what it is good for, so any chat that reads it knows what to do without instructions.
+- `session.md` lists source name, capture time, hash, pipeline version, each swing with its impact timestamp, confidence and ball flight (speed, start direction, grade, or why the ball was not tracked) under a one-line ball flight summary, rejected candidates, and removed duplicates. When there are swings it also carries a short "How to read this session" section naming each file, its order, and what it is good for, so any chat that reads it knows what to do without instructions. The Drive connector hands back text, not images, from a phone, so everything needed to rank swings is in this file; a 33 swing session is about 8KB.
 - Recording tip for the README: in daylight, 240fps slo-mo usually helps the impact frames more than 4K does because the faster shutter cuts blur. Both work.
+
+### Ball flight
+The ball is the only small object that sits still before impact and leaves its spot fast, so it is found against per-pixel medians without a trained model. It is read off each swing's `clip.mp4` (the clip keeps the source frame rate), from 0.5s before impact to 1.42s after, at 960px on the long edge. Pixel limits below are at that scale and per frame at 120fps, scaled to the clip's frame rate.
+1. **Camera check.** When more than 15% of the background outside the golfer (the address pose's extent plus 0.05 frame widths) changes brightness by more than 40 between the first and last quarter second, the camera was bumped or blocked: `lost: camera moved`.
+2. **Rest spot.** The address pose's ankles set a band from 0.06 frame heights above them to 0.07 below. The ball at rest is a spot in that band that is ball colored in the median of the frames before impact and gone from the median of the frames after it. Yellow is `(R + G) / 2 - B`; when no yellow ball is found, white is the darkest of the three channels. The spot has to be round, between 0.1 and 0.35 foot lengths across (heel to toe from the pose, so the limit holds at any camera distance), off both feet, and not behind the heels when the toes point sideways in the picture. Face-on the toes point at the camera and the ball between the feet is allowed.
+3. **Chain.** In each frame, blobs of 2 to 120px that stand out from the window's median in the ball's color. A chain starts within 40px sideways and 150px above the rest spot, from 4 frames before impact to 10 after, and steps to the nearest blob no lower than the last point, at most 60px higher and 40px sideways, with gaps of up to 4 frames. The golfer's side of a line 0.22 frame widths from the rest spot is masked. The longest chain that rises more than 40px over its first five points wins. Leading points still at the rest spot are dropped except the last.
+4. **Metrics** from the first chain point and the tenth after it: `ball_px_per_frame` (distance over frames), `start_dir` (sideways over up, negative is left of the camera line), `impact_frame` (the first point) and `rise_px` (first point to last).
+5. **Grade** within the session: good at `GOLF_BALL_GOOD` (0.9) times the median speed of the tracked swings or more, poor under `GOLF_BALL_POOR` (0.78) times it, fair between. Pixels per frame depend on camera distance and frame rate, so speeds are never compared across sessions. Start direction is reported, not graded, until there is a target line in the picture.
+
+A swing that cannot be followed gets a `lost:` reason and no numbers or grade: `no golfer at address`, `clip under 100fps` (at 30fps the ball is out of frame three frames after impact), `camera moved`, `no ball launched` (no ball, or a practice swing next to one), `ball lost after launch`, or `tracking error` (logged; the rest of the swing is still written). `swing-NN/ball.json` keeps the metrics, the chain points and the thresholds so a later run can re-grade without decoding video. Tracking takes about 1.5s per swing.
+
+On the 2026-10-16 range session (33 clips, 120fps, two camera spots, yellow and white balls) it followed all 26 real shots and gave a lost reason for the 7 that were not shots, and its grades matched the golfer's calls on the six swings he named.
 
 ### Drive storage
 - Originals are removed with `files.delete` (permanent) after the session is in place. Trashed files still count against quota.
@@ -173,6 +186,13 @@ Each swing gets a clip and labeled JPEGs decoded from the original video, 2560px
 - **Impact zoom**: `05-impact-zoom.jpg` shows a native-resolution band at ball height for the frames before, at, and after impact, with the ball in it from either camera angle.
 - **iPhone footage**: HDR, portrait, APAC-plus-AAC `.mov` files process like any other video, with natural color.
 - **Blurry target frame**: for address, top, and finish, a sharper frame within two frames is used instead.
+
+### Ball flight grade
+Each swing's ball flight is graded against the session in `session.md`, so a review can rank swings from text alone.
+- **Tracked swing**: the swing's row has ball px/frame, start direction, a grade and `ok`, and `ball.json` has the chain points.
+- **Yellow dot test**: a synthetic clip with a ball launched at a known speed returns that speed within 5%.
+- **Untracked swing**: the row has a `lost:` reason and empty metric cells, never a guessed grade.
+- **Size**: `session.md` stays under 50KB so it reads through the Drive connector in one call.
 
 ### Drive storage bounds
 - **Original after success**: permanently deleted, not trashed.

@@ -1,5 +1,6 @@
 from datetime import UTC, datetime
 
+from golf_etl.ball import BallFlight
 from golf_etl.detect import Rejected, Swing
 from golf_etl.session import SessionSummary, session_id, write_session_md
 from tests.poses import swing_track
@@ -42,6 +43,26 @@ def test_session_md_lists_swings_rejections_and_duplicates(tmp_path):
     assert "## How to read this session" in text
     assert "`06-sequence.jpg`" in text
     assert "`07-after-shot.jpg`" in text
+
+
+def test_session_md_grades_ball_flight_per_swing(tmp_path):
+    path = tmp_path / "session.md"
+    swings = [Swing(65.81, 0.45, 50.0, swing_track(65.81)), Swing(914.32, 0.38, -83.0, None)]
+    balls = [
+        BallFlight("ok", ball_px_per_frame=14.4, start_dir=-0.36, grade="poor"),
+        BallFlight("lost: no ball launched"),
+    ]
+    write_session_md(path, summary(swings=swings, balls=balls, ball_median=21.3))
+    text = path.read_text()
+    assert (
+        "Ball flight: 0 good, 0 fair, 1 poor, 1 not tracked (median ball speed 21.3 px/frame)"
+        in text
+    )
+    header = "| Swing | Impact | Strength | Hand speed peak | Ball px/frame | Start dir | Grade |"
+    assert f"{header} Track |" in text
+    assert "| swing-01 | 65.81s | 0.45 | +50ms | 14.4 | -0.36 | poor | ok |" in text
+    assert "| swing-02 | 914.32s | 0.38 | -83ms | | | | lost: no ball launched |" in text
+    assert "Ball px/frame" in text.split("| Swing |")[0]  # the guide explains the columns
 
 
 def test_session_md_with_no_swings_says_so(tmp_path):
