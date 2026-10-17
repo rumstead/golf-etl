@@ -102,7 +102,7 @@ class SessionSummary:
 
 def video_time(t: float) -> str:
     """A time in the video, read like the Photos scrubber: seconds, then minutes past a minute."""
-    if t < 60:
+    if round(t, 2) < 60:
         return f"{t:.2f}s"
     tenths = round(t * 10)
     m, rem = divmod(tenths, 600)
