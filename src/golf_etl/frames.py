@@ -11,6 +11,8 @@ STILL_MIN_S = 0.2
 FINISH_AFTER_S = 0.3
 RISE_LOOKBACK_S = 1.0  # the takeaway start is looked for this far before the hands reach the hips
 RISE_EPS_LEGS = 0.05  # how far the hands rise before the takeaway counts as started
+TAKEAWAY_RISE_LEGS = 0.1  # the takeaway position is at least this far above the address hands
+ADDRESS_LEVEL_S = 0.2  # the address hand height is the median over this long before address
 TOP_VISIBLE_MIN = 0.5  # wrist visibility below this around the top: the hands were not seen
 
 
@@ -75,8 +77,9 @@ def pick_positions(
     follow_through_s: float = 0.15,
 ) -> Positions:
     """The backswing positions are body positions, so every swing is compared at the same
-    point however its tempo runs: takeaway when the hands first reach the hips, halfway back
-    when they reach the shoulders. Without hips or shoulders in the pose they fall back to a
+    point however its tempo runs: takeaway when the hands first reach the hips (and have risen
+    TAKEAWAY_RISE_LEGS from address, for a golfer whose hands address at hip height), halfway
+    back when they reach the shoulders. Without hips or shoulders in the pose they fall back to a
     third and two thirds of the time from address to top. Transition and follow-through sit
     transition_s before and follow_through_s after impact, kept between the top and finish."""
     times = track.times
@@ -99,7 +102,8 @@ def pick_positions(
 
     back = top_s - address_s
     below_hips = track.hands_below_hips()
-    takeaway = _first_above(times, below_hips, address_s, top_s)
+    line = _takeaway_line(times, below_hips, address_s, TAKEAWAY_RISE_LEGS * track.leg_length())
+    takeaway = _first_above(times, below_hips - line, address_s, top_s)
     takeaway_s = address_s + back / 3 if takeaway is None else takeaway
     halfway = _first_above(times, track.hands_below_shoulders(), takeaway_s, top_s)
     halfway_s = address_s + 2 * back / 3 if halfway is None else max(halfway, takeaway_s)
@@ -152,6 +156,18 @@ def _rise_start(
         return None
     low = float(np.max(smooth[window]))
     return float(times[window & (smooth >= low - eps)][-1])
+
+
+def _takeaway_line(
+    times: np.ndarray, below_hips: np.ndarray, address_s: float, rise: float
+) -> float:
+    """How far below the hips the hands are at the takeaway position: the hip line, or rise
+    above the hands at address when that is higher. 0 without a pose at address to measure."""
+    at_address = (times >= address_s - ADDRESS_LEVEL_S) & (times <= address_s)
+    level = below_hips[at_address & ~np.isnan(below_hips)]
+    if not level.size or not rise > 0:
+        return 0.0
+    return min(0.0, float(np.median(level)) - rise)
 
 
 def _first_above(
