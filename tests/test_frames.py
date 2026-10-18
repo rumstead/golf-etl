@@ -35,6 +35,19 @@ def test_takeaway_is_when_the_hands_reach_the_hips_going_back():
     assert p.takeaway_s == pytest.approx(8.9, abs=1 / 60)
 
 
+def test_takeaway_waits_for_the_hands_to_rise_when_they_address_at_hip_height():
+    track = swing_track(10.0)
+    track.landmarks[:, [LEFT_HIP, RIGHT_HIP], 1] = 0.6  # legs 0.3 long, hands level with hips
+    address = track.times - 10.0 <= -1.2
+    jitter = np.where(np.arange(address.sum()) % 2 == 0, 0.008, -0.008)
+    track.landmarks[address, LEFT_WRIST, 1] += jitter
+    track.landmarks[address, RIGHT_WRIST, 1] += jitter
+    p = pick_positions(track, 10.0, still_speed=0.15)
+    # 0.1 leg lengths (0.03) above the jittered address, so 0.04 to 0.08s into the backswing
+    assert p.takeaway_s == pytest.approx(8.86, abs=0.03)
+    assert p.takeaway_start_s == pytest.approx(8.8, abs=0.05)
+
+
 def test_halfway_back_is_when_the_hands_reach_the_shoulders():
     p = pick_positions(swing_track(10.0), 10.0, still_speed=0.15)
     assert p.halfway_s == pytest.approx(9.4, abs=1 / 60)
