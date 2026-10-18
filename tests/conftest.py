@@ -62,9 +62,14 @@ def video(tmp_path: Path) -> Path:
 
 
 def make_video_with_clicks(
-    path: Path, clicks: list[float], seconds: float = 10.0, size: str = "1280x720", rate: int = 30
+    path: Path,
+    clicks: list[float],
+    seconds: float = 10.0,
+    size: str = "1280x720",
+    rate: int | str = 30,
 ) -> Path:
-    """Test pattern video whose audio has impact-like clicks at the given times."""
+    """Test pattern video whose audio has impact-like clicks at the given times. `rate` is
+    frames per second, or a ratio like "30000/1001"."""
     import numpy as np
     from scipy.io import wavfile
 
