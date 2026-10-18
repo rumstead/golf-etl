@@ -57,6 +57,22 @@ def test_face_on_ball_between_the_feet(tmp_path):
     assert flight.ball_px_per_frame == pytest.approx(18, rel=0.05)
 
 
+def test_face_on_ball_in_front_of_the_feet_is_too_fast_to_follow(tmp_path):
+    # face-on the ball sits half a leg below the ankles, looks bigger than the foreshortened
+    # feet, and crosses the frame in two or three frames
+    clip = make_ball_clip(
+        tmp_path / "clip.mp4", color=WHITE, rest=(250, 720), radius=8, velocity=(120.0, -25.0)
+    )
+    pose = address_pose(ankle_x=(0.35, 0.65), toes=0, hip_y=0.37)
+    assert track_ball(clip, IMPACT_S, pose).track == "lost: too fast to follow face-on"
+
+
+def test_face_on_practice_swing_has_no_ball(tmp_path):
+    clip = make_ball_clip(tmp_path / "clip.mp4", rest=None)
+    pose = address_pose(ankle_x=(0.35, 0.65), toes=0, hip_y=0.37)
+    assert track_ball(clip, IMPACT_S, pose).track == "lost: no ball launched"
+
+
 @pytest.mark.parametrize(
     "kwargs",
     [{"rest": None}, {"launch_frame": 10_000}],

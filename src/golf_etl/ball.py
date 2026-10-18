@@ -21,6 +21,8 @@ from golf_etl.pose import (
     RIGHT_ANKLE,
     RIGHT_FOOT_INDEX,
     RIGHT_HEEL,
+    leg_height,
+    toes_direction,
 )
 
 LONG_EDGE = 960  # points and px/frame are at this scale, half size for a 1080x1920 clip
@@ -30,6 +32,11 @@ MIN_FPS = 100.0
 WINDOW_S = (-0.5, 1.42)  # frames read around impact
 # The ball rests a little below the ankle line at address, on every camera spot seen so far.
 BAND = (-0.06, 0.07)  # rest spot search rows, frame heights from the address ankles
+# Face-on the ball sits between the golfer and the phone, half a leg below the ankles in the
+# picture, and the toes point at the lens, so foot length is foreshortened. Leg lengths set
+# the search instead.
+FACE_ON_BELOW = 0.8  # leg lengths below the address ankles
+FACE_ON_BALL = (0.03, 0.12)  # rest blob size limits in leg lengths
 FOOT_MARGIN = (0.04, 0.02)  # frame widths and heights around each foot left out of the search
 # A ball is about 0.15 of a shoe long; these keep the search the same at any camera distance.
 BALL_MIN, BALL_MAX = 0.1, 0.35  # rest blob size limits in foot lengths
@@ -147,7 +154,14 @@ def track_ball(clip: Path, impact_s: float, address: np.ndarray | None) -> BallF
     px = np.array([w, h], float)
     ankles = address[[LEFT_ANKLE, RIGHT_ANKLE], :2] * px
     ground = float(np.nanmax(ankles[:, 1]))
-    band = (max(0, int(ground + BAND[0] * h)), min(h, int(ground + BAND[1] * h)))
+    feet = _feet(address, px)
+    leg = float(leg_height(address)) * h
+    face_on = feet.toes == 0 and leg > 0
+    if face_on:
+        below, size = FACE_ON_BELOW * leg, (FACE_ON_BALL[0] * leg, FACE_ON_BALL[1] * leg)
+    else:
+        below, size = BAND[1] * h, (BALL_MIN * feet.length, BALL_MAX * feet.length)
+    band = (max(0, int(ground + BAND[0] * h)), min(h, int(ground + below)))
     window = _Window(clip, info, max(0.0, impact_s + WINDOW_S[0]), impact_s + WINDOW_S[1], band[1])
     k_impact = round(impact_s * info.fps)
 
@@ -162,13 +176,12 @@ def track_ball(clip: Path, impact_s: float, address: np.ndarray | None) -> BallF
         return BallFlight("lost: camera moved")
 
     i_impact = int(np.argmin(np.abs(ks - k_impact)))
-    feet = _feet(address, px)
     name, color = "yellow", COLORS["yellow"]
-    rest = _rest_spot(plane, band[0], i_impact, info.fps, color, feet)
+    rest = _rest_spot(plane, band[0], i_impact, info.fps, color, feet, size)
     if rest is None:
         name, color = "white", COLORS["white"]
         ks, plane, _, _ = window.read(color.plane)
-        rest = _rest_spot(plane, band[0], i_impact, info.fps, color, feet)
+        rest = _rest_spot(plane, band[0], i_impact, info.fps, color, feet, size)
     if rest is None:
         return BallFlight("lost: no ball launched")
 
@@ -179,6 +192,9 @@ def track_ball(clip: Path, impact_s: float, address: np.ndarray | None) -> BallF
     region = plane[:, :, x_off:] if side > 0 else plane[:, :, : max(0, cut)]
     chain = _chain(region, ks, k_impact, (rx - x_off, ry), info.fps, color)
     if not chain:
+        # face-on the ball crosses a 120fps frame in two or three frames, already a streak
+        if face_on:
+            return BallFlight("lost: too fast to follow face-on")
         return BallFlight("lost: ball lost after launch")
     return _metrics([(k, x + x_off, y) for k, x, y in chain], name)
 
@@ -237,7 +253,7 @@ def write_ball_json(
 
 
 def _feet(address: np.ndarray, px: np.ndarray) -> _Feet:
-    boxes, lengths, heels, dxs = [], [], [], []
+    boxes, lengths, heels = [], [], []
     margin = np.array(FOOT_MARGIN) * px
     for ankle, heel, toe in (
         (LEFT_ANKLE, LEFT_HEEL, LEFT_FOOT_INDEX),
@@ -251,12 +267,10 @@ def _feet(address: np.ndarray, px: np.ndarray) -> _Feet:
         if not np.isnan(step).any():
             lengths.append(float(np.hypot(*step)))
             heels.append(float(address[heel, 0] * px[0]))
-            dxs.append(float(step[0]))
     if not lengths:
         return _Feet(boxes, DEFAULT_FOOT_PX, 0.0, 0)
-    length, dx = float(np.median(lengths)), float(np.mean(dxs))
-    toes = int(np.sign(dx)) if abs(dx) > 0.5 * length else 0
-    return _Feet(boxes, length, float(np.mean(heels)), toes)
+    toes = toes_direction(address, px[0] / px[1])
+    return _Feet(boxes, float(np.median(lengths)), float(np.mean(heels)), toes)
 
 
 def _camera_moved(first: np.ndarray, last: np.ndarray, golfer: tuple[int, int]) -> bool:
@@ -284,8 +298,10 @@ def _rest_spot(
     fps: float,
     color: Color,
     feet: _Feet,
+    size: tuple[float, float],
 ) -> tuple[float, float] | None:
-    """Where a ball-sized, ball-colored spot sat before impact and was gone after it."""
+    """Where a ball-sized (`size` px across, min and max), ball-colored spot sat before impact
+    and was gone after it."""
     band = plane[:, top:]
     pre = band[: max(1, i_impact - _frames(12, fps))]
     post = band[i_impact + _frames(36, fps) :]
@@ -300,7 +316,7 @@ def _rest_spot(
         bw, bh, area = stats[j][2], stats[j][3], stats[j][4]
         x, y = float(centers[j][0]), float(centers[j][1]) + top
         round_enough = 0.5 <= bw / bh <= 2 and area >= 0.4 * bw * bh
-        sized = area >= (BALL_MIN * feet.length) ** 2 and max(bw, bh) <= BALL_MAX * feet.length
+        sized = area >= size[0] ** 2 and max(bw, bh) <= size[1]
         if round_enough and sized and not feet.on(x, y) and not feet.behind(x):
             found.append((area, x, y))
     if not found:

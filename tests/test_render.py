@@ -3,6 +3,7 @@ import pytest
 from PIL import Image
 
 from golf_etl import render
+from tests.ball_clips import address_pose
 from tests.poses import swing_track
 
 
@@ -67,6 +68,17 @@ def test_zoom_crop_stays_inside_the_frame_near_the_edge():
     lm = swing_track(10.0).nearest(10.0)
     lm[[27, 28], :2] = (0.99, 0.99)
     assert render.zoom_crop(frame(), lm).shape == (540, 2592, 3)
+
+
+@pytest.mark.parametrize(
+    ("toes", "ball_y"), [(1, 0.63), (0, 0.76)], ids=["down the line", "face-on"]
+)
+def test_zoom_crop_holds_the_ball(toes, ball_y):
+    # down the line the ball sits at the ankles, face-on half a leg in front of them
+    img = frame(1920, 1080)
+    img[round(ball_y * 1920)] = 255
+    lm = address_pose(ankle_y=0.62, ankle_x=(0.35, 0.65), toes=toes, hip_y=0.37)
+    assert (render.zoom_crop(img, lm) == 255).any()
 
 
 def test_save_jpeg_is_rgb_without_exif(tmp_path):

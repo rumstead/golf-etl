@@ -9,10 +9,12 @@ from golf_etl.pose import (
     LEFT_ANKLE,
     LEFT_FOOT_INDEX,
     LEFT_HEEL,
+    LEFT_HIP,
     NUM_LANDMARKS,
     RIGHT_ANKLE,
     RIGHT_FOOT_INDEX,
     RIGHT_HEEL,
+    RIGHT_HIP,
 )
 
 YELLOW = (235, 225, 40)
@@ -20,11 +22,18 @@ WHITE = (240, 240, 235)
 
 
 def address_pose(
-    ankle_y: float = 0.62, ankle_x: tuple[float, float] = (0.2, 0.3), toes: int = 1
+    ankle_y: float = 0.62,
+    ankle_x: tuple[float, float] = (0.2, 0.3),
+    toes: int = 1,
+    hip_y: float | None = None,
 ) -> np.ndarray:
-    """(33, 3) landmarks with only the feet set, normalized to the frame. Toes point right
-    (`toes` 1), left (-1) or at the camera (0), about 60px from the heel at 960px tall."""
+    """(33, 3) landmarks with the feet set, and the hips at `hip_y` when given, normalized to
+    the frame. Toes point right (`toes` 1), left (-1) or at the camera (0), about 60px from
+    the heel at 960px tall."""
     lm = np.full((NUM_LANDMARKS, 3), np.nan)
+    if hip_y is not None:
+        lm[LEFT_HIP] = (ankle_x[0], hip_y, 0.9)
+        lm[RIGHT_HIP] = (ankle_x[1], hip_y, 0.9)
     for ankle, heel, toe, x in (
         (LEFT_ANKLE, LEFT_HEEL, LEFT_FOOT_INDEX, ankle_x[0]),
         (RIGHT_ANKLE, RIGHT_HEEL, RIGHT_FOOT_INDEX, ankle_x[1]),
