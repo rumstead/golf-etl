@@ -41,16 +41,16 @@ def leg_height(landmarks: np.ndarray) -> np.ndarray:
     return ankles - (y[..., LEFT_HIP] + y[..., RIGHT_HIP]) / 2
 
 
-def toes_direction(landmarks: np.ndarray, aspect: float) -> int:
+def toes_direction(landmarks: np.ndarray, aspect: float) -> int | None:
     """1 or -1 when the toes point right or left in the picture, 0 when they point at the
-    camera (face-on) or no foot is seen. `aspect` is frame width over height."""
+    camera (face-on), None when no foot is seen. `aspect` is frame width over height."""
     steps = [
         (landmarks[toe, :2] - landmarks[heel, :2]) * (aspect, 1.0)
         for heel, toe in ((LEFT_HEEL, LEFT_FOOT_INDEX), (RIGHT_HEEL, RIGHT_FOOT_INDEX))
     ]
     steps = [step for step in steps if not np.isnan(step).any()]
     if not steps:
-        return 0
+        return None
     length = float(np.median([np.hypot(*step) for step in steps]))
     dx = float(np.mean([step[0] for step in steps]))
     return int(np.sign(dx)) if abs(dx) > 0.5 * length else 0

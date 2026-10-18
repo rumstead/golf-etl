@@ -52,14 +52,15 @@ def test_ball_left_of_the_golfer(tmp_path):
 
 def test_face_on_ball_between_the_feet(tmp_path):
     clip = make_ball_clip(tmp_path / "clip.mp4", rest=(270, 640), velocity=(0.0, -18.0))
-    flight = track_ball(clip, IMPACT_S, address_pose(ankle_x=(0.35, 0.65), toes=0))
+    pose = address_pose(ankle_x=(0.35, 0.65), toes=0, hip_y=0.37)
+    flight = track_ball(clip, IMPACT_S, pose)
     assert flight.track == "ok"
     assert flight.ball_px_per_frame == pytest.approx(18, rel=0.05)
 
 
 def test_face_on_ball_in_front_of_the_feet_is_too_fast_to_follow(tmp_path):
-    # face-on the ball sits half a leg below the ankles, looks bigger than the foreshortened
-    # feet, and crosses the frame in two or three frames
+    # face-on the ball sits half a leg below the ankles, is wider than half the foreshortened
+    # foot, and crosses the frame in two or three frames
     clip = make_ball_clip(
         tmp_path / "clip.mp4", color=WHITE, rest=(250, 720), radius=8, velocity=(120.0, -25.0)
     )
@@ -70,6 +71,13 @@ def test_face_on_ball_in_front_of_the_feet_is_too_fast_to_follow(tmp_path):
 def test_face_on_practice_swing_has_no_ball(tmp_path):
     clip = make_ball_clip(tmp_path / "clip.mp4", rest=None)
     pose = address_pose(ankle_x=(0.35, 0.65), toes=0, hip_y=0.37)
+    assert track_ball(clip, IMPACT_S, pose).track == "lost: no ball launched"
+
+
+def test_pose_without_feet_is_not_face_on(tmp_path):
+    clip = make_ball_clip(tmp_path / "clip.mp4", color=WHITE, rest=(250, 720), radius=8)
+    pose = address_pose(ankle_x=(0.35, 0.65), toes=0, hip_y=0.37)
+    pose[29:33] = np.nan  # heels and toes
     assert track_ball(clip, IMPACT_S, pose).track == "lost: no ball launched"
 
 

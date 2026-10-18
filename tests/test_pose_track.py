@@ -3,7 +3,8 @@ import csv
 import numpy as np
 import pytest
 
-from golf_etl.pose import write_pose_csv
+from golf_etl.pose import toes_direction, write_pose_csv
+from tests.ball_clips import address_pose
 from tests.poses import still_track, swing_track
 
 
@@ -80,3 +81,14 @@ def test_pose_csv_for_a_4s_clip_reads_in_one_drive_call(tmp_path):
     path = tmp_path / "pose.csv"
     write_pose_csv(swing_track(10.0, fps=60), path, impact_s=10.0, clip_start_s=7.5, clip_fps=120)
     assert path.stat().st_size < 80_000
+
+
+@pytest.mark.parametrize("toes", [1, -1, 0])
+def test_toes_direction(toes):
+    assert toes_direction(address_pose(toes=toes), 9 / 16) == toes
+
+
+def test_toes_direction_without_feet_is_none():
+    pose = address_pose()
+    pose[29:33] = np.nan  # heels and toes
+    assert toes_direction(pose, 9 / 16) is None

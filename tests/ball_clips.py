@@ -28,8 +28,8 @@ def address_pose(
     hip_y: float | None = None,
 ) -> np.ndarray:
     """(33, 3) landmarks with the feet set, and the hips at `hip_y` when given, normalized to
-    the frame. Toes point right (`toes` 1), left (-1) or at the camera (0), about 60px from
-    the heel at 960px tall."""
+    the frame. Toes point right (`toes` 1) or left (-1), about 60px from the heel at 960px
+    tall, or at the camera (0), foreshortened to about 20px."""
     lm = np.full((NUM_LANDMARKS, 3), np.nan)
     if hip_y is not None:
         lm[LEFT_HIP] = (ankle_x[0], hip_y, 0.9)
@@ -44,7 +44,7 @@ def address_pose(
             lm[toe] = (x + 0.09 * toes, ankle_y + 0.025, 0.9)
         else:
             lm[heel] = (x, ankle_y + 0.01, 0.9)
-            lm[toe] = (x + 0.01, ankle_y + 0.07, 0.9)
+            lm[toe] = (x + 0.01, ankle_y + 0.03, 0.9)
     return lm
 
 

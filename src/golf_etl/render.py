@@ -99,8 +99,9 @@ def grid(
 
 
 def zoom_crop(rgb: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
-    """Native-resolution band at ball height: the ankles down the line, and half a leg below
-    them face-on, where the ball sits between the golfer and the phone.
+    """Native-resolution band at ball height: centered on the ankles down the line, and
+    ZOOM_FACE_ON_DROP leg lengths below them face-on, where the ball sits between the golfer
+    and the phone, about half a leg below the ankles in the picture.
 
     Sideways the ball sits between the feet face-on but out past the toes down the line, so
     the band spans the frame width (up to 1.2 frame heights) instead of guessing.

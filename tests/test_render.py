@@ -71,10 +71,10 @@ def test_zoom_crop_stays_inside_the_frame_near_the_edge():
 
 
 @pytest.mark.parametrize(
-    ("toes", "ball_y"), [(1, 0.63), (0, 0.76)], ids=["down the line", "face-on"]
+    ("toes", "ball_y"), [(1, 0.57), (0, 0.76)], ids=["down the line", "face-on"]
 )
 def test_zoom_crop_holds_the_ball(toes, ball_y):
-    # down the line the ball sits at the ankles, face-on half a leg in front of them
+    # down the line the ball sits near the ankles (0.62), face-on half a leg in front of them
     img = frame(1920, 1080)
     img[round(ball_y * 1920)] = 255
     lm = address_pose(ankle_y=0.62, ankle_x=(0.35, 0.65), toes=toes, hip_y=0.37)

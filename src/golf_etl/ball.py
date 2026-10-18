@@ -156,7 +156,7 @@ def track_ball(clip: Path, impact_s: float, address: np.ndarray | None) -> BallF
     ground = float(np.nanmax(ankles[:, 1]))
     feet = _feet(address, px)
     leg = float(leg_height(address)) * h
-    face_on = feet.toes == 0 and leg > 0
+    face_on = toes_direction(address, w / h) == 0 and leg > 0
     if face_on:
         below, size = FACE_ON_BELOW * leg, (FACE_ON_BALL[0] * leg, FACE_ON_BALL[1] * leg)
     else:
@@ -269,7 +269,7 @@ def _feet(address: np.ndarray, px: np.ndarray) -> _Feet:
             heels.append(float(address[heel, 0] * px[0]))
     if not lengths:
         return _Feet(boxes, DEFAULT_FOOT_PX, 0.0, 0)
-    toes = toes_direction(address, px[0] / px[1])
+    toes = toes_direction(address, px[0] / px[1]) or 0
     return _Feet(boxes, float(np.median(lengths)), float(np.mean(heels)), toes)
 
 
