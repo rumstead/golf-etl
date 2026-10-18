@@ -71,6 +71,25 @@ def test_swing_folder_has_every_file_sized_for_claude(tmp_path):
     assert "| 75 (4.00s) |" in (result.session_dir / "session.md").read_text()
 
 
+def test_impact_zoom_has_a_frame_on_each_side_of_impact(tmp_path):
+    # at 29.97fps the frame nearest 4.01s falls at the edge of a three-frame window
+    video = make_video_with_clicks(
+        tmp_path / "ntsc.mp4", [4.01], seconds=14.0, size="640x360", rate="30000/1001"
+    )
+    fake = lambda v, info, cfg: Detection([Swing(4.01, 1.0, 10.0, swing_track(4.01, fps=30))], [])  # noqa: E731
+    result = process_video(
+        video,
+        tmp_path / "out",
+        Settings(),
+        source_name="ntsc.mp4",
+        checksum="ab12cd34ef567890",
+        uploaded_at=UPLOADED,
+        detect=fake,
+    )
+    with Image.open(result.session_dir / "swing-01" / "05-impact-zoom.jpg") as img:
+        assert img.size == (432, 270)  # three 432x90 bands
+
+
 def test_video_without_a_person_writes_a_zero_swing_session(tmp_path):
     video = make_video_with_clicks(tmp_path / "empty.mp4", [3.0], seconds=6.0, size="640x360")
     result = process_video(

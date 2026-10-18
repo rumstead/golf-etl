@@ -120,14 +120,15 @@ def write_swing(
     )
     dt = 1 / info.fps
     picked: dict[str, tuple[float, np.ndarray]] = {}
-    impact_frames: list[np.ndarray] = []
+    impact_frames: list[tuple[int, np.ndarray]] = []  # (offset from impact, frame)
     for name, t in positions.sequence():
         if name == "impact":
-            window = list(read_frames(video, info, t - 1.5 * dt, t + 1.5 * dt))
+            # two spare frames a side, so the frame nearest impact never sits at the edge
+            window = list(read_frames(video, info, t - 2.5 * dt, t + 2.5 * dt))
             if not window:
                 raise RuntimeError(f"no frames decoded around impact at {t:.2f}s")
             i = int(np.argmin([abs(ft - t) for ft, _ in window]))
-            impact_frames = [img for _, img in window[max(0, i - 1) : i + 2]]
+            impact_frames = [(j - i, img) for j, (_, img) in enumerate(window) if abs(j - i) <= 1]
             picked[name] = window[i]
         else:
             r = cfg.sharpness_radius + 0.5
@@ -137,9 +138,10 @@ def write_swing(
             picked[name] = sharpest(window)
 
     address_pose = swing.track.nearest(positions.address_s)
-    crops = [render.zoom_crop(img, address_pose) for img in impact_frames]
-    names = ["impact -1", "impact", "impact +1"] if len(crops) == 3 else ["impact"] * len(crops)
-    strip = np.vstack([render.label(c, n) for c, n in zip(crops, names, strict=True)])
+    names = {-1: "impact -1", 0: "impact", 1: "impact +1"}
+    strip = np.vstack(
+        [render.label(render.zoom_crop(img, address_pose), names[k]) for k, img in impact_frames]
+    )
     zoom = render.fit(strip, cfg.frame_long_edge, cfg.frame_max_pixels)
     render.save_jpeg(zoom, out / "05-impact-zoom.jpg", cfg.jpeg_quality)
     render.save_jpeg_within(
