@@ -24,7 +24,7 @@ Sessions on GitHub are never deleted. Poll once with `golf-etl poll`; it exits w
 ## Recording
 - Phone on a tripod, whole body and the ball in frame, face-on or down the line.
 - Use slo-mo (120fps or more) in daylight. The faster shutter cuts blur, and at 120fps the impact zoom usually catches the club on the ball. Ball flight grading needs 100fps or more.
-- Keep the ball where the camera sees it at rest and for a few feet after it leaves; the grade follows it up the frame.
+- Keep the ball where the camera sees it at rest and for a few feet after it leaves; the grade follows it up the frame. Face-on the ball crosses the frame in two or three frames, so ball grades come from down the line.
 - Sound on. Swings are found by the impact sound.
 
 ## Coaching in claude.ai

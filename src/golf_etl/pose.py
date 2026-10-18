@@ -33,6 +33,29 @@ CSV_JOINTS = {
 }
 
 
+def leg_height(landmarks: np.ndarray) -> np.ndarray:
+    """Hip to ankle height in frame heights for landmarks shaped (..., 33, 3), NaN where the
+    hips or ankles are missing."""
+    y = landmarks[..., 1]
+    ankles = (y[..., LEFT_ANKLE] + y[..., RIGHT_ANKLE]) / 2
+    return ankles - (y[..., LEFT_HIP] + y[..., RIGHT_HIP]) / 2
+
+
+def toes_direction(landmarks: np.ndarray, aspect: float) -> int | None:
+    """1 or -1 when the toes point right or left in the picture, 0 when they point at the
+    camera (face-on), None when no foot is seen. `aspect` is frame width over height."""
+    steps = [
+        (landmarks[toe, :2] - landmarks[heel, :2]) * (aspect, 1.0)
+        for heel, toe in ((LEFT_HEEL, LEFT_FOOT_INDEX), (RIGHT_HEEL, RIGHT_FOOT_INDEX))
+    ]
+    steps = [step for step in steps if not np.isnan(step).any()]
+    if not steps:
+        return None
+    length = float(np.median([np.hypot(*step) for step in steps]))
+    dx = float(np.mean([step[0] for step in steps]))
+    return int(np.sign(dx)) if abs(dx) > 0.5 * length else 0
+
+
 @dataclass(frozen=True)
 class PoseTrack:
     times: np.ndarray  # (n,) seconds
@@ -77,8 +100,7 @@ class PoseTrack:
         """Median hip to ankle height in frame heights, NaN when the legs are never seen. It
         scales with how big the golfer is in frame, so speeds divided by it do not depend on
         where the phone is."""
-        y = self.landmarks[:, :, 1]
-        legs = (y[:, LEFT_ANKLE] + y[:, RIGHT_ANKLE]) / 2 - (y[:, LEFT_HIP] + y[:, RIGHT_HIP]) / 2
+        legs = leg_height(self.landmarks)
         if np.all(np.isnan(legs)):
             return float("nan")
         return float(np.nanmedian(legs))

@@ -8,7 +8,7 @@ import cv2
 import numpy as np
 from PIL import Image
 
-from golf_etl.pose import LEFT_ANKLE, RIGHT_ANKLE
+from golf_etl.pose import LEFT_ANKLE, RIGHT_ANKLE, leg_height, toes_direction
 
 # Shoulders, arms, torso, legs. Face and hand landmarks only add clutter.
 SKELETON = [
@@ -28,6 +28,7 @@ SKELETON = [
     (28, 32),
 ]
 ZOOM_BAND = 0.25  # impact zoom band height as a fraction of frame height
+ZOOM_FACE_ON_DROP = 0.35  # face-on the band centers this many leg lengths below the ankles
 # Sizes tried for a byte-bounded copy, largest first, then qualities at each size.
 SMALL_LONG_EDGES = (1600, 1360, 1150, 980, 830, 710, 600, 510, 430, 370, 320)
 SMALL_QUALITIES = (80, 70, 60)
@@ -98,10 +99,12 @@ def grid(
 
 
 def zoom_crop(rgb: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
-    """Native-resolution band at ball height (ankle level).
+    """Native-resolution band at ball height: centered on the ankles down the line, and
+    ZOOM_FACE_ON_DROP leg lengths below them face-on, where the ball sits between the golfer
+    and the phone, about half a leg below the ankles in the picture.
 
-    The ball sits between the feet face-on but out past the toes down the line, so the band
-    spans the frame width (up to 1.2 frame heights) instead of guessing where the ball is.
+    Sideways the ball sits between the feet face-on but out past the toes down the line, so
+    the band spans the frame width (up to 1.2 frame heights) instead of guessing.
     """
     h, w = rgb.shape[:2]
     band_h = round(h * ZOOM_BAND)
@@ -111,6 +114,9 @@ def zoom_crop(rgb: np.ndarray, landmarks: np.ndarray) -> np.ndarray:
         cx, cy = w / 2, h * 0.8
     else:
         cx, cy = ankles[:, 0].mean() * w, ankles[:, 1].mean() * h
+        leg = float(leg_height(landmarks))
+        if toes_direction(landmarks, w / h) == 0 and leg > 0:
+            cy += ZOOM_FACE_ON_DROP * leg * h
     x0 = int(np.clip(cx - band_w / 2, 0, w - band_w))
     y0 = int(np.clip(cy - band_h / 2, 0, h - band_h))
     return rgb[y0 : y0 + band_h, x0 : x0 + band_w]

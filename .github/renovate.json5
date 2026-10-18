@@ -2,7 +2,8 @@
   // Renovate configuration for golf-etl.
   // Covers: pip requirements, the Python base image in the Dockerfile, GitHub
   // Actions in the CI workflow, the rclone release pinned in the Dockerfile, and
-  // the tus-js-client version pinned in the upload page.
+  // the tus-js-client version pinned in the upload page. The pose model URL in the
+  // Dockerfile is pinned by hand.
   $schema: 'https://docs.renovatebot.com/renovate-schema.json',
   extends: [
     'config:recommended',
@@ -20,6 +21,12 @@
       automerge: true,
     },
     {
+      // mediapipe pins its own numpy and opencv expectations, move them together.
+      matchManagers: ['pip_requirements'],
+      matchPackageNames: ['mediapipe', 'numpy', 'opencv-contrib-python'],
+      groupName: 'mediapipe stack',
+    },
+    {
       // Group the remaining non-major pip bumps into one PR.
       matchManagers: ['pip_requirements'],
       matchUpdateTypes: ['minor'],
@@ -32,6 +39,15 @@
       matchPackageNames: ['python'],
       matchUpdateTypes: ['major', 'minor'],
       dependencyDashboardApproval: true,
+    },
+    {
+      // The script tag carries an integrity hash that the bump does not change, and the
+      // browser refuses the script until it matches.
+      matchPackageNames: ['tus-js-client'],
+      automerge: false,
+      prBodyNotes: [
+        'Update the `integrity` hash on the tus-js-client script tag in `src/golf_etl/upload_page/index.html` before merging.',
+      ],
     },
   ],
 
