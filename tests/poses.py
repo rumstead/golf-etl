@@ -131,15 +131,3 @@ def waggle_track(center_s: float, hand_y: float, fps: float = 60.0) -> PoseTrack
     track.landmarks[:, LEFT_WRIST, 1] = bob
     track.landmarks[:, RIGHT_WRIST, 1] = bob
     return track
-
-
-def late_rise_track(impact_s: float, fps: float = 60.0) -> PoseTrack:
-    """A swing_track whose hands creep back low and rise late in the backswing, reaching the
-    hips about 0.35s after takeaway instead of 0.1s."""
-    track = swing_track(impact_s, fps=fps)
-    rel = track.times - impact_s
-    back = (rel > -1.2) & (rel <= -0.4)
-    y = 0.6 - 0.4 * ((rel[back] + 1.2) / 0.8) ** 2.5
-    track.landmarks[back, LEFT_WRIST, 1] = y
-    track.landmarks[back, RIGHT_WRIST, 1] = y
-    return track

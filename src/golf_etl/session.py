@@ -13,10 +13,10 @@ _GUIDE_INTRO = """## How to read this session
 - Each `swing-NN/` folder is one swing, in the order hit.
 - Start with `06-sequence.jpg`: the whole swing in one image, read left to right, top row \
 then bottom row: address, takeaway, halfway back, top, transition, impact, follow-through, finish. \
-Takeaway is the hands reaching hip height going back (and clearly above where they sat at \
-address, for a setup with the hands at hip height) and halfway back is the hands reaching \
-shoulder height, so those panels show the same body position on every swing. Transition and \
-follow-through are the same short time before and after impact on every swing.
+Takeaway is 30% of the way from takeaway start to the top, about where the club is parallel \
+to the ground, and halfway back is the hands reaching shoulder height, so those panels line \
+up across swings. Transition and follow-through are the same short time before and after \
+impact on every swing.
 - `05-impact-zoom.jpg` is the ball area at full resolution for the frames just before, at, \
 and after impact, top to bottom. Use it for contact, shaft lean, and strike.
 """
