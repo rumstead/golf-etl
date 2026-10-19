@@ -12,7 +12,6 @@ FINISH_AFTER_S = 0.3
 RISE_LOOKBACK_S = 1.0  # the takeaway start is looked for this far before the hands reach the hips
 RISE_EPS_LEGS = 0.05  # how far the hands rise before the takeaway counts as started
 TAKEAWAY_RISE_LEGS = 0.1  # the hip line counts once the hands are this far above address too
-TAKEAWAY_SHARE = 0.3  # of the time from takeaway start to top: about where the club is parallel
 ADDRESS_LEVEL_S = 0.2  # the address hand height is the median over this long before address
 TOP_VISIBLE_MIN = 0.5  # wrist visibility below this around the top: the hands were not seen
 
@@ -21,7 +20,7 @@ TOP_VISIBLE_MIN = 0.5  # wrist visibility below this around the top: the hands w
 class Positions:
     address_s: float  # end of the still stretch at address
     takeaway_start_s: float  # the hands start rising from address
-    takeaway_s: float  # TAKEAWAY_SHARE of the way from takeaway start to top
+    takeaway_s: float  # a fixed time before the top
     halfway_s: float  # hands up to the shoulders going back
     top_s: float
     transition_s: float  # a fixed time before impact
@@ -76,15 +75,16 @@ def pick_positions(
     still_speed: float,
     transition_s: float = 0.1,
     follow_through_s: float = 0.15,
+    takeaway_before_top_s: float = 0.33,
 ) -> Positions:
-    """Takeaway is TAKEAWAY_SHARE of the time from takeaway start to top, where the club is
-    about parallel to the ground from either camera angle. The takeaway start is found looking
-    back from the hands first reaching the hips (and having risen TAKEAWAY_RISE_LEGS from
-    address, for a golfer whose hands address at hip height). Halfway back is when the hands
-    reach the shoulders. Without hips or shoulders in the pose the backswing is timed from
-    address, and halfway back falls back to two thirds of the time from address to top.
-    Transition and follow-through sit transition_s before and follow_through_s after impact,
-    kept between the top and finish."""
+    """Takeaway is takeaway_before_top_s before the top, never before the takeaway start: the
+    club is about parallel to the ground then from either camera angle. The takeaway start is
+    found looking back from the hands first reaching the hips (and having risen
+    TAKEAWAY_RISE_LEGS from address, for a golfer whose hands address at hip height), and is
+    address without hips in the pose. Halfway back is when the hands reach the shoulders, or
+    without shoulders two thirds of the time from address to top. Transition and
+    follow-through sit transition_s before and follow_through_s after impact, kept between the
+    top and finish."""
     times = track.times
     speed = track.hand_speed()
     height = track.hand_height()
@@ -111,7 +111,7 @@ def pick_positions(
     if at_hips is not None:
         rise = _rise_start(times, below_hips, RISE_EPS_LEGS * track.leg_length(), at_hips)
     takeaway_start_s = address_s if rise is None else rise
-    takeaway_s = takeaway_start_s + TAKEAWAY_SHARE * (top_s - takeaway_start_s)
+    takeaway_s = max(top_s - takeaway_before_top_s, takeaway_start_s)
     halfway = _first_above(times, track.hands_below_shoulders(), takeaway_s, top_s)
     halfway_s = max(address_s + 2 * back / 3 if halfway is None else halfway, takeaway_s)
     near_top = (times >= top_s - 0.1) & (times <= min(top_s + 0.3, impact_s - 0.1))

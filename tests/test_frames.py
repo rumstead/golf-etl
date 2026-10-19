@@ -26,14 +26,21 @@ def test_positions_without_pose_fall_back_to_offsets():
     track = swing_track(10.0, missing=(7.0, 12.0))
     p = pick_positions(track, 10.0, still_speed=0.15)
     assert (p.address_s, p.top_s, p.finish_s) == pytest.approx((8.2, 9.2, track.times[-1]))
-    assert (p.takeaway_s, p.halfway_s) == pytest.approx((8.2 + 0.3, 8.2 + 2 / 3))
+    assert p.takeaway_s == pytest.approx(p.top_s - 0.33)
+    assert p.halfway_s == pytest.approx(max(8.2 + 2 / 3, p.takeaway_s))
     assert not p.top_in_frame
 
 
-def test_takeaway_is_30_percent_of_the_way_from_takeaway_start_to_top():
+def test_takeaway_is_a_fixed_time_before_the_top():
     p = pick_positions(swing_track(10.0), 10.0, still_speed=0.15)
-    assert p.takeaway_s == pytest.approx(p.takeaway_start_s + 0.3 * (p.top_s - p.takeaway_start_s))
-    assert p.takeaway_s == pytest.approx(9.04, abs=0.03)  # start 8.8, top 9.6
+    assert p.takeaway_s == pytest.approx(p.top_s - 0.33)
+    p = pick_positions(swing_track(10.0), 10.0, still_speed=0.15, takeaway_before_top_s=0.5)
+    assert p.takeaway_s == pytest.approx(p.top_s - 0.5)
+
+
+def test_takeaway_is_never_before_the_takeaway_start():
+    p = pick_positions(swing_track(10.0), 10.0, still_speed=0.15, takeaway_before_top_s=2.0)
+    assert p.takeaway_s == p.takeaway_start_s
 
 
 def test_takeaway_is_well_into_the_backswing_when_the_hands_address_at_hip_height():
@@ -45,7 +52,7 @@ def test_takeaway_is_well_into_the_backswing_when_the_hands_address_at_hip_heigh
     track.landmarks[address, RIGHT_WRIST, 1] += jitter
     p = pick_positions(track, 10.0, still_speed=0.15)
     assert p.takeaway_start_s == pytest.approx(8.8, abs=0.05)
-    assert p.takeaway_s == pytest.approx(9.04, abs=0.05)
+    assert p.takeaway_s == pytest.approx(9.27, abs=0.03)  # top 9.6
 
 
 def test_halfway_back_is_when_the_hands_reach_the_shoulders():
@@ -58,7 +65,7 @@ def test_positions_without_hips_or_shoulders_space_the_backswing_in_time():
     track.landmarks[:, [LEFT_HIP, RIGHT_HIP, LEFT_SHOULDER, RIGHT_SHOULDER]] = np.nan
     p = pick_positions(track, 10.0, still_speed=0.15)
     back = p.top_s - p.address_s
-    assert p.takeaway_s == pytest.approx(p.address_s + 0.3 * back)
+    assert p.takeaway_s == pytest.approx(p.top_s - 0.33)
     assert p.halfway_s == pytest.approx(p.address_s + 2 * back / 3)
 
 

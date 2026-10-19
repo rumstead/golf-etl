@@ -33,6 +33,7 @@ def test_ball_is_on_its_rest_spot_until_it_launches(tmp_path):
     clip = make_ball_clip(tmp_path / "clip.mp4", velocity=(-4.0, -20.0))
     flight = track_ball(clip, IMPACT_S, address_pose())
     assert _on_spot(clip, flight, range(296, 304)) == [True] * 5 + [False] * 3
+    assert not flight.rest.face_on
 
 
 def test_ball_too_fast_to_follow_face_on_still_has_its_rest_spot(tmp_path):
@@ -41,7 +42,7 @@ def test_ball_too_fast_to_follow_face_on_still_has_its_rest_spot(tmp_path):
     )
     pose = address_pose(ankle_x=(0.35, 0.65), toes=0, hip_y=0.37)
     flight = track_ball(clip, IMPACT_S, pose)
-    assert flight.rest is not None
+    assert flight.rest.face_on
     assert _on_spot(clip, flight, range(299, 302)) == [True, True, False]
 
 
@@ -60,6 +61,15 @@ def test_shoe_turning_through_is_not_the_ball(tmp_path):
     flight = track_ball(clip, IMPACT_S, address_pose())
     assert flight.track == "ok"
     assert flight.ball_px_per_frame == pytest.approx(16, rel=0.05)
+
+
+def test_spot_gone_long_after_impact_is_not_the_ball(tmp_path):
+    # a yellow spot that goes away 45 frames after impact, next to a white ball that is hit
+    clip = make_ball_clip(
+        tmp_path / "clip.mp4", color=WHITE, velocity=(0.0, -16.0), stray=(440, 615, 5, 345)
+    )
+    flight = track_ball(clip, IMPACT_S, address_pose())
+    assert (flight.track, flight.ball) == ("ok", "white")
 
 
 def test_spot_behind_the_heels_is_not_the_ball(tmp_path):
