@@ -51,6 +51,7 @@ MAX_GAP = 4  # frames
 MIN_POINTS, SPEED_POINTS = 6, 10
 MIN_RISE = 40  # px over the first five points
 REST_STILL = 6  # px; leading chain points closer than this are the ball still at rest
+REST_PATCH = 0.6  # of the rest blob's radius, the middle of the ball read to tell it is there
 
 
 @dataclass(frozen=True)
@@ -83,6 +84,19 @@ COLORS = {
 
 
 @dataclass(frozen=True)
+class RestSpot:
+    """Where the ball sat before impact, in fractions of the frame (radius in frame heights),
+    and its color plane there before impact and after the ball left."""
+
+    x: float
+    y: float
+    radius: float
+    ball: str  # "yellow" or "white"
+    before: float
+    after: float
+
+
+@dataclass(frozen=True)
 class BallFlight:
     track: str  # "ok", or "lost: <reason>"
     impact_frame: int | None = None
@@ -92,6 +106,7 @@ class BallFlight:
     points: tuple[tuple[int, float, float], ...] = ()  # (frame, x, y) at LONG_EDGE
     grade: str | None = None
     ball: str | None = None  # "yellow" or "white"
+    rest: RestSpot | None = None
 
     @property
     def ok(self) -> bool:
@@ -185,7 +200,8 @@ def track_ball(clip: Path, impact_s: float, address: np.ndarray | None) -> BallF
     if rest is None:
         return BallFlight("lost: no ball launched")
 
-    rx, ry = rest
+    rx, ry, r, before, after = rest
+    spot = RestSpot(rx / w, ry / h, r / h, name, before, after)
     side = 1 if rx >= float(np.nanmean(ankles[:, 0])) else -1
     cut = int(rx - side * GOLFER_GAP * w)
     x_off = max(0, cut) if side > 0 else 0
@@ -194,9 +210,16 @@ def track_ball(clip: Path, impact_s: float, address: np.ndarray | None) -> BallF
     if not chain:
         # face-on the ball crosses a 120fps frame in two or three frames, already a streak
         if face_on:
-            return BallFlight("lost: too fast to follow face-on")
-        return BallFlight("lost: ball lost after launch")
-    return _metrics([(k, x + x_off, y) for k, x, y in chain], name)
+            return BallFlight("lost: too fast to follow face-on", rest=spot)
+        return BallFlight("lost: ball lost after launch", rest=spot)
+    return replace(_metrics([(k, x + x_off, y) for k, x, y in chain], name), rest=spot)
+
+
+def on_rest_spot(rgb: np.ndarray, rest: RestSpot) -> bool:
+    """Whether the ball still sits on its rest spot in `rgb`, a frame of the video at any size."""
+    h, w = rgb.shape[:2]
+    level = _patch(COLORS[rest.ball].plane(rgb), rest.x * w, rest.y * h, rest.radius * h)
+    return level >= (rest.before + rest.after) / 2
 
 
 def grade(
@@ -299,9 +322,9 @@ def _rest_spot(
     color: Color,
     feet: _Feet,
     size: tuple[float, float],
-) -> tuple[float, float] | None:
+) -> tuple[float, float, float, float, float] | None:
     """Where a ball-sized (`size` px across, min and max), ball-colored spot sat before impact
-    and was gone after it."""
+    and was gone after it: x, y, its radius, and the plane there before and after."""
     band = plane[:, top:]
     pre = band[: max(1, i_impact - _frames(12, fps))]
     post = band[i_impact + _frames(36, fps) :]
@@ -318,11 +341,18 @@ def _rest_spot(
         round_enough = 0.5 <= bw / bh <= 2 and area >= 0.4 * bw * bh
         sized = area >= size[0] ** 2 and max(bw, bh) <= size[1]
         if round_enough and sized and not feet.on(x, y) and not feet.behind(x):
-            found.append((area, x, y))
+            found.append((area, x, y, max(bw, bh) / 2))
     if not found:
         return None
-    _, x, y = max(found)
-    return x, y
+    _, x, y, r = max(found)
+    return x, y, r, _patch(before, x, y - top, r), _patch(after, x, y - top, r)
+
+
+def _patch(plane: np.ndarray, x: float, y: float, r: float) -> float:
+    """Mean of `plane` over the middle of a ball of radius `r` at x, y."""
+    half = max(1, round(REST_PATCH * r))
+    cx, cy = round(x), round(y)
+    return float(plane[max(0, cy - half) : cy + half + 1, max(0, cx - half) : cx + half + 1].mean())
 
 
 def _chain(

@@ -1,4 +1,5 @@
 import json
+import re
 from datetime import UTC, datetime
 
 import pytest
@@ -7,6 +8,15 @@ from PIL import Image
 from golf_etl.config import Settings
 from golf_etl.detect import Detection, Swing
 from golf_etl.pipeline import process_video
+from golf_etl.pose import (
+    LEFT_ANKLE,
+    LEFT_FOOT_INDEX,
+    LEFT_HEEL,
+    RIGHT_ANKLE,
+    RIGHT_FOOT_INDEX,
+    RIGHT_HEEL,
+)
+from tests.ball_clips import address_pose, make_ball_clip
 from tests.conftest import make_video, make_video_with_clicks
 from tests.poses import swing_track
 
@@ -88,6 +98,29 @@ def test_impact_zoom_has_a_frame_on_each_side_of_impact(tmp_path):
     )
     with Image.open(result.session_dir / "swing-01" / "05-impact-zoom.jpg") as img:
         assert img.size == (432, 270)  # three 432x90 bands
+
+
+def test_impact_is_the_last_frame_before_the_ball_leaves_its_spot(tmp_path):
+    # the ball leaves its spot after frame 300 (2.5s); the sound lands three frames early
+    video = make_ball_clip(tmp_path / "swing.mp4")
+    heard = 2.5 - 3 / 120
+    track = swing_track(heard, fps=30)
+    feet = [LEFT_ANKLE, LEFT_HEEL, LEFT_FOOT_INDEX, RIGHT_ANKLE, RIGHT_HEEL, RIGHT_FOOT_INDEX]
+    track.landmarks[:, feet] = address_pose()[feet]
+    fake = lambda v, info, cfg: Detection([Swing(heard, 1.0, 10.0, track)], [])  # noqa: E731
+    result = process_video(
+        video,
+        tmp_path / "out",
+        Settings(),
+        source_name="swing.mp4",
+        checksum="ab12cd34ef567890",
+        uploaded_at=UPLOADED,
+        detect=fake,
+    )
+    timing = (result.session_dir / "session.md").read_text().split("## Timing")[1]
+    row = next(r for r in timing.splitlines() if r.startswith("| swing-01"))
+    impact_frame = int(re.findall(r"\| (\d+) \(", row)[2])  # the clip starts at 0s
+    assert abs(impact_frame - 300) <= 1
 
 
 def test_video_without_a_person_writes_a_zero_swing_session(tmp_path):

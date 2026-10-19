@@ -3,7 +3,8 @@ import math
 import numpy as np
 import pytest
 
-from golf_etl.ball import track_ball
+from golf_etl.ball import on_rest_spot, track_ball
+from golf_etl.media import probe, read_frames
 from tests.ball_clips import WHITE, address_pose, make_ball_clip
 
 pytestmark = pytest.mark.media
@@ -18,6 +19,30 @@ def test_yellow_ball_speed_and_direction(tmp_path):
     assert flight.ball_px_per_frame == pytest.approx(math.hypot(4, 20), rel=0.05)
     assert flight.start_dir == pytest.approx(-0.2, abs=0.05)
     assert abs(flight.impact_frame - 300) <= 2
+
+
+def _on_spot(clip, flight, frames):
+    """Whether the ball sits on its rest spot in each of `frames`, full size."""
+    info = probe(clip)
+    window = read_frames(clip, info, (frames[0] - 0.25) / 120, (frames[-1] + 0.75) / 120)
+    return [on_rest_spot(img, flight.rest) for _, img in window][: len(frames)]
+
+
+def test_ball_is_on_its_rest_spot_until_it_launches(tmp_path):
+    # launched at frame 300: still at rest there, 20px up a frame later
+    clip = make_ball_clip(tmp_path / "clip.mp4", velocity=(-4.0, -20.0))
+    flight = track_ball(clip, IMPACT_S, address_pose())
+    assert _on_spot(clip, flight, range(296, 304)) == [True] * 5 + [False] * 3
+
+
+def test_ball_too_fast_to_follow_face_on_still_has_its_rest_spot(tmp_path):
+    clip = make_ball_clip(
+        tmp_path / "clip.mp4", color=WHITE, rest=(250, 720), radius=8, velocity=(120.0, -25.0)
+    )
+    pose = address_pose(ankle_x=(0.35, 0.65), toes=0, hip_y=0.37)
+    flight = track_ball(clip, IMPACT_S, pose)
+    assert flight.rest is not None
+    assert _on_spot(clip, flight, range(299, 302)) == [True, True, False]
 
 
 def test_white_ball_speed(tmp_path):

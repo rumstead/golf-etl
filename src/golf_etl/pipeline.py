@@ -1,6 +1,7 @@
 """One video in, one session folder out."""
 
 import logging
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
@@ -10,7 +11,7 @@ import numpy as np
 
 from golf_etl import render
 from golf_etl.audio import SAMPLE_RATE, Onset, find_onsets
-from golf_etl.ball import BallFlight, grade, track_ball, write_ball_json
+from golf_etl.ball import BallFlight, RestSpot, grade, on_rest_spot, track_ball, write_ball_json
 from golf_etl.config import Settings
 from golf_etl.detect import Detection, Rejected, Swing, detect_swings
 from golf_etl.frames import Timing, after_shot_time, pick_positions, sharpest, swing_timing
@@ -20,6 +21,7 @@ from golf_etl.session import SessionSummary, session_id, video_time, write_sessi
 
 Detector = Callable[[Path, VideoInfo, Settings], Detection]
 log = logging.getLogger(__name__)
+CONTACT_SEARCH = 12  # frames either side of the sound searched for the ball leaving its spot
 
 
 @dataclass(frozen=True)
@@ -113,34 +115,50 @@ def write_swing(
     cfg: Settings,
     next_impact_s: float | None = None,
 ) -> tuple[BallFlight, Timing]:
-    """Write the swing's frames and clip, follow the ball in the clip, and time the swing."""
+    """Write the swing's clip, follow the ball in it, then write the frames and time the swing
+    with impact at the last frame before the ball leaves its spot."""
     out.mkdir(parents=True, exist_ok=True)
     positions = pick_positions(
         swing.track, swing.impact_s, cfg.still_speed, cfg.transition_s, cfg.follow_through_s
     )
+    address_pose = swing.track.nearest(positions.address_s)
+    clip_start = max(0.0, swing.impact_s - cfg.pre_impact_s)
+    encode_clip(
+        video,
+        info,
+        clip_start,
+        swing.impact_s + cfg.post_impact_s,
+        out / "clip.mp4",
+        cfg.clip_long_edge,
+        cfg.clip_crf,
+    )
+    try:
+        flight = track_ball(out / "clip.mp4", swing.impact_s - clip_start, address_pose)
+    except Exception:
+        # a tracking bug costs this swing its grade, not the whole session
+        log.exception("ball tracking failed for %s", out.name)
+        flight = BallFlight("lost: tracking error")
+
+    impact_frames, i, impact_s = _impact_frames(video, info, swing.impact_s, flight.rest)
+    positions = pick_positions(
+        swing.track, impact_s, cfg.still_speed, cfg.transition_s, cfg.follow_through_s
+    )
     dt = 1 / info.fps
-    picked: dict[str, tuple[float, np.ndarray]] = {}
-    impact_frames: list[tuple[int, np.ndarray]] = []  # (offset from impact, frame)
+    picked: dict[str, tuple[float, np.ndarray]] = {"impact": impact_frames[i]}
     for name, t in positions.sequence():
-        if name == "impact":
-            # two spare frames a side, so the frame nearest impact never sits at the edge
-            window = list(read_frames(video, info, t - 2.5 * dt, t + 2.5 * dt))
-            if not window:
-                raise RuntimeError(f"no frames decoded around impact at {t:.2f}s")
-            i = int(np.argmin([abs(ft - t) for ft, _ in window]))
-            impact_frames = [(j - i, img) for j, (_, img) in enumerate(window) if abs(j - i) <= 1]
-            picked[name] = window[i]
-        else:
+        if name != "impact":
             r = cfg.sharpness_radius + 0.5
             window = list(read_frames(video, info, t - r * dt, t + r * dt))
             if not window:
                 raise RuntimeError(f"no frames decoded around {name} at {t:.2f}s")
             picked[name] = sharpest(window)
 
-    address_pose = swing.track.nearest(positions.address_s)
     names = {-1: "impact -1", 0: "impact", 1: "impact +1"}
     strip = np.vstack(
-        [render.label(render.zoom_crop(img, address_pose), names[k]) for k, img in impact_frames]
+        [
+            render.label(render.zoom_crop(img, address_pose), names[j - i])
+            for j, (_, img) in enumerate(impact_frames)
+        ]
     )
     zoom = render.fit(strip, cfg.frame_long_edge, cfg.frame_max_pixels)
     render.save_jpeg(zoom, out / "05-impact-zoom.jpg", cfg.jpeg_quality)
@@ -180,22 +198,33 @@ def write_swing(
         cfg.small_max_bytes,
     )
 
-    clip_start = max(0.0, swing.impact_s - cfg.pre_impact_s)
-    encode_clip(
-        video,
-        info,
-        clip_start,
-        swing.impact_s + cfg.post_impact_s,
-        out / "clip.mp4",
-        cfg.clip_long_edge,
-        cfg.clip_crf,
-    )
-    write_pose_csv(swing.track, out / "pose.csv", swing.impact_s, clip_start, info.fps)
-    timing = swing_timing(positions, clip_start, info.fps)
-    try:
-        flight = track_ball(out / "clip.mp4", swing.impact_s - clip_start, address_pose)
-    except Exception:
-        # a tracking bug costs this swing its grade, not the whole session
-        log.exception("ball tracking failed for %s", out.name)
-        flight = BallFlight("lost: tracking error")
-    return flight, timing
+    write_pose_csv(swing.track, out / "pose.csv", positions.impact_s, clip_start, info.fps)
+    return flight, swing_timing(positions, clip_start, info.fps)
+
+
+def _impact_frames(
+    video: Path, info: VideoInfo, impact_s: float, rest: RestSpot | None
+) -> tuple[list[tuple[float, np.ndarray]], int, float]:
+    """The impact frame and its neighbors, which of them is impact, and the impact time.
+    Impact is the last frame with the ball on its rest spot, within CONTACT_SEARCH frames of
+    the sound. Without a ball seen leaving its spot there, it is the frame nearest the sound,
+    at the time of the sound."""
+    dt = 1 / info.fps
+    reach = CONTACT_SEARCH * dt if rest is not None else 2 * dt
+    near: list[tuple[float, np.ndarray]] = []  # the two frames a side of the sound
+    recent: deque[tuple[float, np.ndarray]] = deque(maxlen=2)
+    seen_ball = False
+    for frame in read_frames(video, info, impact_s - reach - dt / 2, impact_s + reach + dt / 2):
+        if abs(frame[0] - impact_s) <= 2.5 * dt:
+            near.append(frame)
+        if rest is not None:
+            if on_rest_spot(frame[1], rest):
+                seen_ball = True
+            elif seen_ball:
+                return [*recent, frame], len(recent) - 1, recent[-1][0]
+        recent.append(frame)
+    if not near:
+        raise RuntimeError(f"no frames decoded around impact at {impact_s:.2f}s")
+    i = int(np.argmin([abs(ft - impact_s) for ft, _ in near]))
+    lo = max(0, i - 1)
+    return near[lo : i + 2], i - lo, impact_s
