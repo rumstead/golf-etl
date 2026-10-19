@@ -125,11 +125,12 @@ def test_impact_is_the_last_frame_before_the_ball_leaves_its_spot(tmp_path):
     assert abs(impact_frame - 299) <= 1
 
 
-def _impact_on_spot(video, pose):
+def _impact_on_spot(video, pose, heard=2.5 - 3 / 120):
     """Whether the ball is on its rest spot in impact -1, impact and impact +1."""
     info = probe(video)
     rest = track_ball(video, 2.5, pose).rest
-    frames, i, _ = _impact_frames(video, info, 2.5 - 3 / 120, rest)
+    frames, i, _ = _impact_frames(video, info, heard, rest)
+    assert i >= 1
     return [on_rest_spot(img, rest) for _, img in frames[i - 1 : i + 2]]
 
 
@@ -143,6 +144,20 @@ def test_impact_down_the_line_is_a_frame_before_the_ball_leaves_its_spot(tmp_pat
     # down the line the ball still covers its spot the frame after contact
     video = make_ball_clip(tmp_path / "swing.mp4")
     assert _impact_on_spot(video, address_pose()) == [True, True, True]
+
+
+def test_impact_down_the_line_when_the_ball_leaves_early_in_the_search(tmp_path):
+    # the sound 12.4 frames after the ball last sits on its spot (frame 300)
+    video = make_ball_clip(tmp_path / "swing.mp4")
+    assert _impact_on_spot(video, address_pose(), heard=312.4 / 120) == [True, True, True]
+
+
+def test_impact_search_scales_with_the_frame_rate(tmp_path):
+    # at 240fps the sound lands 15 frames early, still inside 0.1s
+    video = make_ball_clip(tmp_path / "swing.mp4", fps=240, frames=960, launch_frame=600)
+    rest = track_ball(video, 2.5, address_pose()).rest
+    _, _, impact_s = _impact_frames(video, probe(video), 2.5 - 15 / 240, rest)
+    assert impact_s == pytest.approx(2.5 - 1 / 240, abs=1.5 / 240)
 
 
 def test_video_without_a_person_writes_a_zero_swing_session(tmp_path):

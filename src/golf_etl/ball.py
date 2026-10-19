@@ -52,7 +52,7 @@ MIN_POINTS, SPEED_POINTS = 6, 10
 MIN_RISE = 40  # px over the first five points
 REST_STILL = 6  # px; leading chain points closer than this are the ball still at rest
 REST_PATCH = 0.6  # of the rest blob's radius, the middle of the ball read to tell it is there
-LEAVE_FRAMES = 12  # the ball leaves its spot within this many frames of the sound
+LEAVE_FRAMES = 12  # the ball leaves its spot within this many frames of the sound, at REF_FPS
 
 
 @dataclass(frozen=True)

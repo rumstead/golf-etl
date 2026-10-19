@@ -13,6 +13,7 @@ from golf_etl import render
 from golf_etl.audio import SAMPLE_RATE, Onset, find_onsets
 from golf_etl.ball import (
     LEAVE_FRAMES,
+    REF_FPS,
     BallFlight,
     RestSpot,
     grade,
@@ -223,11 +224,12 @@ def _impact_frames(
     camera's line of sight and still covers its spot the frame after contact. Without a ball
     seen leaving its spot there, it is the frame nearest the sound, at the time of the sound."""
     dt = 1 / info.fps
-    reach = LEAVE_FRAMES * dt if rest is not None else 2 * dt
+    reach = LEAVE_FRAMES / REF_FPS if rest is not None else 2 * dt
     near: list[tuple[float, np.ndarray]] = []  # the two frames a side of the sound
     recent: deque[tuple[float, np.ndarray]] = deque(maxlen=3)
     seen_ball = False
-    for frame in read_frames(video, info, impact_s - reach - dt / 2, impact_s + reach + dt / 2):
+    # two frames before the search, so impact down the line still has a frame before it
+    for frame in read_frames(video, info, impact_s - reach - 2.5 * dt, impact_s + reach + dt / 2):
         if abs(frame[0] - impact_s) <= 2.5 * dt:
             near.append(frame)
         if rest is not None:
