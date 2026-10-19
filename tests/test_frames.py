@@ -11,7 +11,7 @@ from golf_etl.pose import (
     RIGHT_SHOULDER,
     RIGHT_WRIST,
 )
-from tests.poses import late_rise_track, swing_track
+from tests.poses import swing_track
 
 
 def test_positions_on_a_clean_swing():
@@ -26,16 +26,17 @@ def test_positions_without_pose_fall_back_to_offsets():
     track = swing_track(10.0, missing=(7.0, 12.0))
     p = pick_positions(track, 10.0, still_speed=0.15)
     assert (p.address_s, p.top_s, p.finish_s) == pytest.approx((8.2, 9.2, track.times[-1]))
-    assert (p.takeaway_s, p.halfway_s) == pytest.approx((8.2 + 1 / 3, 8.2 + 2 / 3))
+    assert (p.takeaway_s, p.halfway_s) == pytest.approx((8.2 + 0.3, 8.2 + 2 / 3))
     assert not p.top_in_frame
 
 
-def test_takeaway_is_when_the_hands_reach_the_hips_going_back():
+def test_takeaway_is_30_percent_of_the_way_from_takeaway_start_to_top():
     p = pick_positions(swing_track(10.0), 10.0, still_speed=0.15)
-    assert p.takeaway_s == pytest.approx(8.9, abs=1 / 60)
+    assert p.takeaway_s == pytest.approx(p.takeaway_start_s + 0.3 * (p.top_s - p.takeaway_start_s))
+    assert p.takeaway_s == pytest.approx(9.04, abs=0.03)  # start 8.8, top 9.6
 
 
-def test_takeaway_waits_for_the_hands_to_rise_when_they_address_at_hip_height():
+def test_takeaway_is_well_into_the_backswing_when_the_hands_address_at_hip_height():
     track = swing_track(10.0)
     track.landmarks[:, [LEFT_HIP, RIGHT_HIP], 1] = 0.6  # legs 0.3 long, hands level with hips
     address = track.times - 10.0 <= -1.2
@@ -43,9 +44,8 @@ def test_takeaway_waits_for_the_hands_to_rise_when_they_address_at_hip_height():
     track.landmarks[address, LEFT_WRIST, 1] += jitter
     track.landmarks[address, RIGHT_WRIST, 1] += jitter
     p = pick_positions(track, 10.0, still_speed=0.15)
-    # 0.1 leg lengths (0.03) above the jittered address, so 0.04 to 0.08s into the backswing
-    assert p.takeaway_s == pytest.approx(8.86, abs=0.03)
     assert p.takeaway_start_s == pytest.approx(8.8, abs=0.05)
+    assert p.takeaway_s == pytest.approx(9.04, abs=0.05)
 
 
 def test_halfway_back_is_when_the_hands_reach_the_shoulders():
@@ -53,19 +53,12 @@ def test_halfway_back_is_when_the_hands_reach_the_shoulders():
     assert p.halfway_s == pytest.approx(9.4, abs=1 / 60)
 
 
-def test_takeaway_matches_the_body_position_on_a_late_rising_backswing():
-    track = late_rise_track(10.0)
-    p = pick_positions(track, 10.0, still_speed=0.15)
-    below = track.hands_below_hips()[int(np.argmin(np.abs(track.times - p.takeaway_s)))]
-    assert below == pytest.approx(0.0, abs=0.01)
-
-
 def test_positions_without_hips_or_shoulders_space_the_backswing_in_time():
     track = swing_track(10.0)
     track.landmarks[:, [LEFT_HIP, RIGHT_HIP, LEFT_SHOULDER, RIGHT_SHOULDER]] = np.nan
     p = pick_positions(track, 10.0, still_speed=0.15)
     back = p.top_s - p.address_s
-    assert p.takeaway_s == pytest.approx(p.address_s + back / 3)
+    assert p.takeaway_s == pytest.approx(p.address_s + 0.3 * back)
     assert p.halfway_s == pytest.approx(p.address_s + 2 * back / 3)
 
 

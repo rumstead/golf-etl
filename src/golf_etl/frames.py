@@ -11,7 +11,8 @@ STILL_MIN_S = 0.2
 FINISH_AFTER_S = 0.3
 RISE_LOOKBACK_S = 1.0  # the takeaway start is looked for this far before the hands reach the hips
 RISE_EPS_LEGS = 0.05  # how far the hands rise before the takeaway counts as started
-TAKEAWAY_RISE_LEGS = 0.1  # the takeaway position is at least this far above the address hands
+TAKEAWAY_RISE_LEGS = 0.1  # the hip line counts once the hands are this far above address too
+TAKEAWAY_SHARE = 0.3  # of the time from takeaway start to top: about where the club is parallel
 ADDRESS_LEVEL_S = 0.2  # the address hand height is the median over this long before address
 TOP_VISIBLE_MIN = 0.5  # wrist visibility below this around the top: the hands were not seen
 
@@ -20,7 +21,7 @@ TOP_VISIBLE_MIN = 0.5  # wrist visibility below this around the top: the hands w
 class Positions:
     address_s: float  # end of the still stretch at address
     takeaway_start_s: float  # the hands start rising from address
-    takeaway_s: float  # hands up to the hips going back
+    takeaway_s: float  # TAKEAWAY_SHARE of the way from takeaway start to top
     halfway_s: float  # hands up to the shoulders going back
     top_s: float
     transition_s: float  # a fixed time before impact
@@ -76,12 +77,14 @@ def pick_positions(
     transition_s: float = 0.1,
     follow_through_s: float = 0.15,
 ) -> Positions:
-    """The backswing positions are body positions, so every swing is compared at the same
-    point however its tempo runs: takeaway when the hands first reach the hips (and have risen
-    TAKEAWAY_RISE_LEGS from address, for a golfer whose hands address at hip height), halfway
-    back when they reach the shoulders. Without hips or shoulders in the pose they fall back to a
-    third and two thirds of the time from address to top. Transition and follow-through sit
-    transition_s before and follow_through_s after impact, kept between the top and finish."""
+    """Takeaway is TAKEAWAY_SHARE of the time from takeaway start to top, where the club is
+    about parallel to the ground from either camera angle. The takeaway start is found looking
+    back from the hands first reaching the hips (and having risen TAKEAWAY_RISE_LEGS from
+    address, for a golfer whose hands address at hip height). Halfway back is when the hands
+    reach the shoulders. Without hips or shoulders in the pose the backswing is timed from
+    address, and halfway back falls back to two thirds of the time from address to top.
+    Transition and follow-through sit transition_s before and follow_through_s after impact,
+    kept between the top and finish."""
     times = track.times
     speed = track.hand_speed()
     height = track.hand_height()
@@ -103,19 +106,20 @@ def pick_positions(
     back = top_s - address_s
     below_hips = track.hands_below_hips()
     line = _takeaway_line(times, below_hips, address_s, TAKEAWAY_RISE_LEGS * track.leg_length())
-    takeaway = _first_above(times, below_hips - line, address_s, top_s)
-    takeaway_s = address_s + back / 3 if takeaway is None else takeaway
+    at_hips = _first_above(times, below_hips - line, address_s, top_s)
+    rise = None
+    if at_hips is not None:
+        rise = _rise_start(times, below_hips, RISE_EPS_LEGS * track.leg_length(), at_hips)
+    takeaway_start_s = address_s if rise is None else rise
+    takeaway_s = takeaway_start_s + TAKEAWAY_SHARE * (top_s - takeaway_start_s)
     halfway = _first_above(times, track.hands_below_shoulders(), takeaway_s, top_s)
-    halfway_s = address_s + 2 * back / 3 if halfway is None else max(halfway, takeaway_s)
+    halfway_s = max(address_s + 2 * back / 3 if halfway is None else halfway, takeaway_s)
     near_top = (times >= top_s - 0.1) & (times <= min(top_s + 0.3, impact_s - 0.1))
     visible = track.landmarks[near_top][:, [LEFT_WRIST, RIGHT_WRIST], 2].mean(axis=1)
     top_in_frame = not bool(np.any(np.nan_to_num(visible) < TOP_VISIBLE_MIN))
-    rise = None
-    if takeaway is not None:
-        rise = _rise_start(times, below_hips, RISE_EPS_LEGS * track.leg_length(), takeaway_s)
     return Positions(
         address_s,
-        min(address_s, takeaway_s) if rise is None else rise,
+        takeaway_start_s,
         takeaway_s,
         halfway_s,
         top_s,
