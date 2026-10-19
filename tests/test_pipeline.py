@@ -5,9 +5,11 @@ from datetime import UTC, datetime
 import pytest
 from PIL import Image
 
+from golf_etl.ball import on_rest_spot, track_ball
 from golf_etl.config import Settings
 from golf_etl.detect import Detection, Swing
-from golf_etl.pipeline import process_video
+from golf_etl.media import probe
+from golf_etl.pipeline import _impact_frames, process_video
 from golf_etl.pose import (
     LEFT_ANKLE,
     LEFT_FOOT_INDEX,
@@ -120,7 +122,27 @@ def test_impact_is_the_last_frame_before_the_ball_leaves_its_spot(tmp_path):
     timing = (result.session_dir / "session.md").read_text().split("## Timing")[1]
     row = next(r for r in timing.splitlines() if r.startswith("| swing-01"))
     impact_frame = int(re.findall(r"\| (\d+) \(", row)[2])  # the clip starts at 0s
-    assert abs(impact_frame - 300) <= 1
+    assert abs(impact_frame - 299) <= 1
+
+
+def _impact_on_spot(video, pose):
+    """Whether the ball is on its rest spot in impact -1, impact and impact +1."""
+    info = probe(video)
+    rest = track_ball(video, 2.5, pose).rest
+    frames, i, _ = _impact_frames(video, info, 2.5 - 3 / 120, rest)
+    return [on_rest_spot(img, rest) for _, img in frames[i - 1 : i + 2]]
+
+
+def test_impact_face_on_is_the_last_frame_with_the_ball_on_its_spot(tmp_path):
+    video = make_ball_clip(tmp_path / "swing.mp4", rest=(270, 640), velocity=(0.0, -18.0))
+    pose = address_pose(ankle_x=(0.35, 0.65), toes=0, hip_y=0.37)
+    assert _impact_on_spot(video, pose) == [True, True, False]
+
+
+def test_impact_down_the_line_is_a_frame_before_the_ball_leaves_its_spot(tmp_path):
+    # down the line the ball still covers its spot the frame after contact
+    video = make_ball_clip(tmp_path / "swing.mp4")
+    assert _impact_on_spot(video, address_pose()) == [True, True, True]
 
 
 def test_video_without_a_person_writes_a_zero_swing_session(tmp_path):

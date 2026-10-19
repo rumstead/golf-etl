@@ -52,6 +52,7 @@ MIN_POINTS, SPEED_POINTS = 6, 10
 MIN_RISE = 40  # px over the first five points
 REST_STILL = 6  # px; leading chain points closer than this are the ball still at rest
 REST_PATCH = 0.6  # of the rest blob's radius, the middle of the ball read to tell it is there
+LEAVE_FRAMES = 12  # the ball leaves its spot within this many frames of the sound
 
 
 @dataclass(frozen=True)
@@ -94,6 +95,7 @@ class RestSpot:
     ball: str  # "yellow" or "white"
     before: float
     after: float
+    face_on: bool
 
 
 @dataclass(frozen=True)
@@ -201,7 +203,7 @@ def track_ball(clip: Path, impact_s: float, address: np.ndarray | None) -> BallF
         return BallFlight("lost: no ball launched")
 
     rx, ry, r, before, after = rest
-    spot = RestSpot(rx / w, ry / h, r / h, name, before, after)
+    spot = RestSpot(rx / w, ry / h, r / h, name, before, after, face_on)
     side = 1 if rx >= float(np.nanmean(ankles[:, 0])) else -1
     cut = int(rx - side * GOLFER_GAP * w)
     x_off = max(0, cut) if side > 0 else 0
@@ -341,11 +343,32 @@ def _rest_spot(
         round_enough = 0.5 <= bw / bh <= 2 and area >= 0.4 * bw * bh
         sized = area >= size[0] ** 2 and max(bw, bh) <= size[1]
         if round_enough and sized and not feet.on(x, y) and not feet.behind(x):
-            found.append((area, x, y, max(bw, bh) / 2))
+            r = max(bw, bh) / 2
+            levels = _patch(before, x, y - top, r), _patch(after, x, y - top, r)
+            if _leaves_near(band, x, y - top, r, levels, i_impact, fps):
+                found.append((area, x, y, r, *levels))
     if not found:
         return None
-    _, x, y, r = max(found)
-    return x, y, r, _patch(before, x, y - top, r), _patch(after, x, y - top, r)
+    _, x, y, r, was, gone = max(found)
+    return x, y, r, was, gone
+
+
+def _leaves_near(
+    band: np.ndarray,
+    x: float,
+    y: float,
+    r: float,
+    levels: tuple[float, float],
+    i_impact: int,
+    fps: float,
+) -> bool:
+    """Whether the spot reads as the ball in some frame within LEAVE_FRAMES of impact and as
+    gone in a later one there: a spot that goes away long after impact is not the ball hit."""
+    reach = _frames(LEAVE_FRAMES, fps)
+    mid = sum(levels) / 2
+    near = band[max(0, i_impact - reach) : i_impact + reach + 1]
+    on = [_patch(frame, x, y, r) >= mid for frame in near]
+    return True in on and False in on[on.index(True) :]
 
 
 def _patch(plane: np.ndarray, x: float, y: float, r: float) -> float:

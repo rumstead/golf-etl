@@ -11,7 +11,15 @@ import numpy as np
 
 from golf_etl import render
 from golf_etl.audio import SAMPLE_RATE, Onset, find_onsets
-from golf_etl.ball import BallFlight, RestSpot, grade, on_rest_spot, track_ball, write_ball_json
+from golf_etl.ball import (
+    LEAVE_FRAMES,
+    BallFlight,
+    RestSpot,
+    grade,
+    on_rest_spot,
+    track_ball,
+    write_ball_json,
+)
 from golf_etl.config import Settings
 from golf_etl.detect import Detection, Rejected, Swing, detect_swings
 from golf_etl.frames import Timing, after_shot_time, pick_positions, sharpest, swing_timing
@@ -21,7 +29,6 @@ from golf_etl.session import SessionSummary, session_id, video_time, write_sessi
 
 Detector = Callable[[Path, VideoInfo, Settings], Detection]
 log = logging.getLogger(__name__)
-CONTACT_SEARCH = 12  # frames either side of the sound searched for the ball leaving its spot
 
 
 @dataclass(frozen=True)
@@ -141,7 +148,12 @@ def write_swing(
 
     impact_frames, i, impact_s = _impact_frames(video, info, swing.impact_s, flight.rest)
     positions = pick_positions(
-        swing.track, impact_s, cfg.still_speed, cfg.transition_s, cfg.follow_through_s
+        swing.track,
+        impact_s,
+        cfg.still_speed,
+        cfg.transition_s,
+        cfg.follow_through_s,
+        cfg.takeaway_before_top_s,
     )
     dt = 1 / info.fps
     picked: dict[str, tuple[float, np.ndarray]] = {"impact": impact_frames[i]}
@@ -206,13 +218,14 @@ def _impact_frames(
     video: Path, info: VideoInfo, impact_s: float, rest: RestSpot | None
 ) -> tuple[list[tuple[float, np.ndarray]], int, float]:
     """The impact frame and its neighbors, which of them is impact, and the impact time.
-    Impact is the last frame with the ball on its rest spot, within CONTACT_SEARCH frames of
-    the sound. Without a ball seen leaving its spot there, it is the frame nearest the sound,
-    at the time of the sound."""
+    Face-on impact is the last frame with the ball on its rest spot, within LEAVE_FRAMES
+    frames of the sound. Down the line it is the frame before that: the ball leaves along the
+    camera's line of sight and still covers its spot the frame after contact. Without a ball
+    seen leaving its spot there, it is the frame nearest the sound, at the time of the sound."""
     dt = 1 / info.fps
-    reach = CONTACT_SEARCH * dt if rest is not None else 2 * dt
+    reach = LEAVE_FRAMES * dt if rest is not None else 2 * dt
     near: list[tuple[float, np.ndarray]] = []  # the two frames a side of the sound
-    recent: deque[tuple[float, np.ndarray]] = deque(maxlen=2)
+    recent: deque[tuple[float, np.ndarray]] = deque(maxlen=3)
     seen_ball = False
     for frame in read_frames(video, info, impact_s - reach - dt / 2, impact_s + reach + dt / 2):
         if abs(frame[0] - impact_s) <= 2.5 * dt:
@@ -221,7 +234,10 @@ def _impact_frames(
             if on_rest_spot(frame[1], rest):
                 seen_ball = True
             elif seen_ball:
-                return [*recent, frame], len(recent) - 1, recent[-1][0]
+                window = [*recent, frame]
+                i = max(0, len(recent) - (1 if rest.face_on else 2))
+                lo = max(0, i - 1)
+                return window[lo : i + 2], i - lo, window[i][0]
         recent.append(frame)
     if not near:
         raise RuntimeError(f"no frames decoded around impact at {impact_s:.2f}s")

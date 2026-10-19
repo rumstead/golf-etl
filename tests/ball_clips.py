@@ -61,11 +61,13 @@ def make_ball_clip(
     frames: int = 480,
     shift_from: int | None = None,
     decoy: tuple[int, int, int] | None = None,
+    stray: tuple[int, int, int, int] | None = None,
 ) -> Path:
     """Write an H.264 clip of a ball resting at `rest` (pixels) that flies off at
     `velocity` (pixels per frame) from `launch_frame`. No ball when `rest` is None.
     From `shift_from` on the picture drops a quarter frame, like a bumped camera. A `decoy`
-    (x, y, radius) is a white patch that vanishes at launch, like a shoe turning through."""
+    (x, y, radius) is a white patch that vanishes at launch, like a shoe turning through. A
+    `stray` (x, y, radius, frame) is a yellow ball-sized spot that vanishes at that frame."""
     w, h = size
     rng = np.random.default_rng(7)
     turf = np.zeros((h, w, 3), np.int16)
@@ -90,6 +92,10 @@ def make_ball_clip(
             if decoy is not None and k < launch_frame:
                 cx, cy, r = decoy
                 img[cy - r : cy + r, cx - r : cx + r] = WHITE
+            if stray is not None and k < stray[3]:
+                sx, sy, sr, _ = stray
+                inside = dx**2 + dy**2 <= sr**2
+                img[(sy + dy)[inside], (sx + dx)[inside]] = YELLOW
             if rest is not None:
                 dt = max(0, k - launch_frame)
                 bx = round(rest[0] + velocity[0] * dt)
