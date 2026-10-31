@@ -89,6 +89,12 @@ def test_hand_height_at_30fps_is_read_at_the_nearest_sample():
     assert check.reason == "hands above the hips (0.16 leg lengths)"
 
 
+def test_hand_height_is_read_at_the_nearest_sample_when_none_is_close():
+    track = swing_track(10.0, fps=20)
+    i = int(np.argmin(np.abs(track.times - 10.0)))
+    assert confirm(track, track.times[i] - 0.024, CFG).reason == ""
+
+
 def test_rejects_a_fast_waggle_with_the_hands_low():
     check = confirm(waggle_track(10.0, hand_y=0.75), 10.0, CFG)
     assert check.offset_ms is None

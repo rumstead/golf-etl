@@ -12,9 +12,9 @@ from golf_etl.pose import PoseTrack
 # Pose around each sound covers the confirm window plus this much on each side, so the hand
 # speed at the window edges is not an edge-of-track estimate.
 CONFIRM_MARGIN_S = 0.2
-# The hand height check reads the pose samples this close to the sound, or the nearest one: one
-# either side at 60 a second, only the nearest at 30. With a driver the hands come back up so
-# fast after impact that by the sample nearest the sound they can be past the limit.
+# The hand height check reads the pose samples this close to the sound (at 60 a second, the one
+# either side), or the nearest one when none is. With a driver the hands come back up so fast
+# after impact that by the sample nearest the sound they can be past the limit.
 HANDS_NEAR_S = 0.02
 
 TrackFor = Callable[[float, float], PoseTrack]  # pose track for [start_s, end_s) of the video
@@ -50,8 +50,8 @@ class Check:
 
 def confirm(track: PoseTrack, onset_s: float, cfg: Settings) -> Check:
     """Confirmed when the hands are moving fast within confirm_window_ms of the sound and sit
-    about level with the hips, or pass that level, within HANDS_NEAR_S of the sound, as they do
-    at impact.
+    about level with the hips, or pass that level, within HANDS_NEAR_S of the sound (or at the
+    nearest pose sample), as they do at impact.
 
     Speed and height are measured in leg lengths so a close phone does not make a waggle look
     fast. Where the hands are fastest overall does not matter: some camera angles see the
