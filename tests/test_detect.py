@@ -59,6 +59,36 @@ def test_rejects_fast_hands_at_the_finish():
     assert check.reason.startswith("hands above the hips")
 
 
+def _hands_above_hips(track, above: dict[int, float]) -> None:
+    """Put the hands `above[i]` leg lengths above the hips at sample i of a swing_track."""
+    for i, legs in above.items():
+        track.landmarks[i, [LEFT_WRIST, RIGHT_WRIST], 1] = 0.55 - legs * 0.35
+
+
+def test_confirms_when_the_hands_are_at_the_hips_at_the_sample_before_the_sound():
+    # a driver from behind: by the pose sample nearest the sound the hands are past the limit
+    track = swing_track(10.0)
+    i = int(np.argmin(np.abs(track.times - 10.0)))
+    _hands_above_hips(track, {i - 1: 0.05, i: 0.16, i + 1: 0.3})
+    assert confirm(track, track.times[i] - 0.004, CFG).reason == ""
+
+
+def test_hand_height_is_read_only_at_the_samples_next_to_the_sound():
+    track = swing_track(10.0)
+    i = int(np.argmin(np.abs(track.times - 10.0)))
+    _hands_above_hips(track, {i - 2: 0.05, i - 1: 0.16, i: 0.18})
+    check = confirm(track, track.times[i] - 0.004, CFG)
+    assert check.reason == "hands above the hips (0.16 leg lengths)"
+
+
+def test_hand_height_at_30fps_is_read_at_the_nearest_sample():
+    track = swing_track(10.0, fps=30)
+    i = int(np.argmin(np.abs(track.times - 10.0)))
+    _hands_above_hips(track, {i - 1: 0.05, i: 0.16})
+    check = confirm(track, track.times[i] - 0.004, CFG)
+    assert check.reason == "hands above the hips (0.16 leg lengths)"
+
+
 def test_rejects_a_fast_waggle_with_the_hands_low():
     check = confirm(waggle_track(10.0, hand_y=0.75), 10.0, CFG)
     assert check.offset_ms is None
