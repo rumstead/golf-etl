@@ -262,8 +262,18 @@ def read_shot(
             first_seen[field] = next(t for t, text in found if text == values[field])
     count = len(reads[FIELDS[0]])
     if _unchanged(_reads(before, panel, glyphs), values):
-        return SimShot(dict.fromkeys(FIELDS), dict.fromkeys(FIELDS, 0), count, {}, unchanged=True)
+        return blank_shot(count, unchanged=True)
     return SimShot(values, votes, count, first_seen)
+
+
+def blank_shot(frames: int, unchanged: bool = False) -> SimShot:
+    """A shot read from `frames` frames with every field blank."""
+    return SimShot(dict.fromkeys(FIELDS), dict.fromkeys(FIELDS, 0), frames, {}, unchanged)
+
+
+def same_panel(a: Panel | None, b: Panel, px: int) -> bool:
+    """Whether `a` was found and every edge is within `px` of `b`'s."""
+    return a is not None and all(abs(x - y) <= px for x, y in zip(a.box, b.box, strict=True))
 
 
 def _reads(

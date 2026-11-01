@@ -2,7 +2,7 @@
 
 import logging
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Iterable, Iterator
 from dataclasses import dataclass
 from datetime import datetime
 from functools import cache
@@ -35,10 +35,12 @@ from golf_etl.sim import (
     Panel,
     SimShot,
     before_window,
+    blank_shot,
     counts_settled,
     find_panel,
     pick_panel,
     read_shot,
+    same_panel,
     shot_window,
     write_sim_json,
 )
@@ -47,6 +49,8 @@ Detector = Callable[[Path, VideoInfo, Settings], Detection]
 log = logging.getLogger(__name__)
 PANEL_SWINGS = 5  # swings searched for the readout panel
 PANEL_AFTER_S = (3.0, 4.0, 5.0)  # after each impact, when the panel shows that swing's shot
+PANEL_CHECKS = (1, 3)  # of each swing's frames read, searched again for the panel
+PANEL_MOVED_PX = 3  # a swing whose panel is farther than this on an edge from the session's
 
 
 @dataclass(frozen=True)
@@ -285,8 +289,10 @@ def _write_sim(
     previous_impact_s, next_impact_s = neighbors
     start, end = shot_window(impact_s, info.duration_s, next_impact_s, cfg.pre_impact_s)
     before_start, before_end = before_window(impact_s, previous_impact_s)
+    found: list[Panel | None] = []
     try:
         frames = read_frames(video, info, start, end, None, SAMPLE_FPS) if start < end else []
+        frames = _searched(frames, found)
         before = (
             read_frames(video, info, before_start, before_end, None, SAMPLE_FPS)
             if before_start < before_end
@@ -298,10 +304,27 @@ def _write_sim(
         # a read bug costs this swing its numbers, not the whole session
         log.exception("sim read failed for %s", out.name)
         return None
+    if found and not any(same_panel(p, panel, PANEL_MOVED_PX) for p in found):
+        boxes = [p.box if p else None for p in found]
+        log.info("%s: readout panel moved to %s; sim fields left blank", out.name, boxes)
+        shot = blank_shot(shot.frames)
     if shot.unchanged:
         log.info("%s: the screen did not change after impact; sim fields left blank", out.name)
     write_sim_json(out / "sim.json", shot, panel)
     return shot
+
+
+def _searched(
+    frames: Iterable[tuple[float, np.ndarray]], found: list[Panel | None]
+) -> Iterator[tuple[float, np.ndarray]]:
+    """The frames, with the panel searched in those at PANEL_CHECKS and added to `found`.
+
+    A bumped camera moves the panel after the session's box was found, and a box a row off
+    reads other fields' numbers."""
+    for i, frame in enumerate(frames):
+        if i in PANEL_CHECKS:
+            found.append(find_panel(frame[1]))
+        yield frame
 
 
 def _impact_frames(

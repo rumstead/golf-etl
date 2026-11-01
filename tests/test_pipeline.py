@@ -236,13 +236,13 @@ def test_a_video_without_a_screen_writes_no_sim_json(tmp_path, caplog):
     assert "no readout panel: 0 of 3 frames matched" in caplog.text
 
 
-def _screen_still(name: str) -> np.ndarray:
-    """A 1920x1080 frame with a fixture's readout panel where IMG_4761 has it."""
+def _screen_still(name: str, down: int = 0) -> np.ndarray:
+    """A 1920x1080 frame with a fixture's panel where IMG_4761 has it, or `down` px lower."""
     rgb, _ = load(name)
     # the fixture's panel at (40, 40) sits at (1381, 203) in the video
     still = np.empty((1080, 1920, 3), np.uint8)
     still[:] = load("4761-s1")[0][0, 0]
-    still[163 : 163 + rgb.shape[0], 1341 : 1341 + rgb.shape[1]] = rgb
+    still[163 + down : 163 + down + rgb.shape[0], 1341 : 1341 + rgb.shape[1]] = rgb
     return still
 
 
@@ -303,6 +303,27 @@ def test_a_swing_with_the_same_numbers_on_screen_before_impact_reads_blank(tmp_p
     assert all(f["text"] is None for f in sim["fields"].values())
     text = (result.session_dir / "session.md").read_text()
     assert "| swing-01 | | | | | | | | | | | | |" in text.split("## Sim")[1]
+
+
+def test_a_swing_whose_panel_moved_a_row_reads_blank(tmp_path, caplog):
+    # the session box comes from swings 1 and 3; for swing 2 the camera put the panel a row lower
+    row = 40
+    stills = [
+        (_screen_still("4762-s8"), 1.0),
+        (_screen_still("4761-s1"), 6.0),
+        (_screen_still("4762-s8", row), 2.0),
+        (_screen_still("4761-s1", row), 6.0),
+        (_screen_still("4762-s8"), 2.0),
+        (_screen_still("4761-s1"), 15.0),
+    ]
+    video = _still_video(tmp_path / "moved.mp4", stills)
+    with caplog.at_level(logging.INFO, logger="golf_etl.pipeline"):
+        result = _process(video, tmp_path / "out", [1.0, 9.0, 17.0])
+    assert _sim(result.session_dir, 1)["fields"]["club_speed"]["text"] == "73.2"
+    moved = _sim(result.session_dir, 2)
+    assert all(f["text"] is None for f in moved["fields"].values())
+    assert "swing-02: readout panel moved" in caplog.text
+    assert _sim(result.session_dir, 3)["fields"]["club_speed"]["text"] == "73.2"
 
 
 def test_a_swing_that_fails_to_read_gets_no_sim_json(tmp_path, screen_video, monkeypatch):
