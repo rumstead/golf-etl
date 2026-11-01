@@ -7,6 +7,7 @@ from pathlib import Path
 from golf_etl.ball import BallFlight, summary_line
 from golf_etl.detect import Rejected, Swing
 from golf_etl.frames import Timing
+from golf_etl.sim import SimShot
 
 _GUIDE_INTRO = """## How to read this session
 
@@ -80,6 +81,26 @@ Start dir is sideways over up: negative starts left of the camera line, positive
 A `lost:` track says why the ball could not be followed, and that swing has no grade.
 """
 
+SIM_GUIDE = """\
+The numbers below are read off the simulator screen. A blank cell means the screen was covered \
+or unreadable in most frames; check `07-after-shot.jpg` for those.
+"""
+
+SIM_COLUMNS = {
+    "Club mph": "club_speed",
+    "Ball mph": "ball_speed",
+    "Smash": "smash",
+    "Carry raw yd": "carry_raw",
+    "Carry game yd": "carry_game",
+    "Total yd": "total_length",
+    "Peak ft": "peak_height",
+    "Back spin": "back_spin",
+    "Total spin": "total_spin",
+    "Path": "club_path",
+    "Face to path": "face_to_path",
+    "Face to target": "face_to_target",
+}
+
 
 def session_id(captured: datetime, checksum: str) -> str:
     return f"{captured:%Y-%m-%d-%H%M}-{checksum[:8]}"
@@ -98,6 +119,8 @@ class SessionSummary:
     balls: list[BallFlight] = field(default_factory=list)  # one per swing, in swing order
     ball_median: float | None = None
     timings: list[Timing] = field(default_factory=list)  # one per swing, in order
+    # one per swing, None when its read failed; empty when the video shows no readout panel
+    sims: list[SimShot | None] = field(default_factory=list)
     storage: str = "github"
 
 
@@ -154,6 +177,16 @@ def write_session_md(path: Path, s: SessionSummary) -> None:
             )
     else:
         lines.append("No swings detected.")
+    if s.swings and s.sims:
+        lines += ["", "## Sim", "", SIM_GUIDE]
+        lines += [
+            "| Swing | " + " | ".join(SIM_COLUMNS) + " |",
+            "|---" * (len(SIM_COLUMNS) + 1) + "|",
+        ]
+        for n, shot in enumerate(s.sims, 1):
+            values = shot.values if shot else {}
+            cells = [f"swing-{n:02d}"] + [values.get(f) or "" for f in SIM_COLUMNS.values()]
+            lines.append("|" + "|".join(f" {c} " if c else " " for c in cells) + "|")
     if s.swings and s.timings:
         lines += [
             "",

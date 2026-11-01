@@ -5,6 +5,8 @@ from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
+from functools import cache
+from importlib.resources import as_file, files
 from pathlib import Path
 
 import numpy as np
@@ -27,9 +29,22 @@ from golf_etl.frames import Timing, after_shot_time, pick_positions, sharpest, s
 from golf_etl.media import VideoInfo, encode_clip, probe, read_audio, read_frames
 from golf_etl.pose import PoseEstimator, write_pose_csv
 from golf_etl.session import SessionSummary, session_id, video_time, write_session_md
+from golf_etl.sim import (
+    SAMPLE_FPS,
+    Glyphs,
+    Panel,
+    SimShot,
+    find_panel,
+    pick_panel,
+    read_shot,
+    shot_window,
+    write_sim_json,
+)
 
 Detector = Callable[[Path, VideoInfo, Settings], Detection]
 log = logging.getLogger(__name__)
+PANEL_SWINGS = 5  # swings searched for the readout panel
+PANEL_AFTER_S = (3.0, 4.0, 5.0)  # after each impact, when the panel shows that swing's shot
 
 
 @dataclass(frozen=True)
@@ -78,14 +93,16 @@ def process_video(
     session_dir = out_root / sid
     session_dir.mkdir(parents=True, exist_ok=True)
     impacts = [s.impact_s for s in detection.swings]
-    balls, timings = [], []
+    panel = _find_panel(video, info, impacts, cfg)
+    balls, timings, sims = [], [], []
     for n, swing in enumerate(detection.swings, 1):
         next_impact = impacts[n] if n < len(impacts) else None
-        flight, timing = write_swing(
-            video, info, swing, session_dir / f"swing-{n:02d}", cfg, next_impact
-        )
+        out = session_dir / f"swing-{n:02d}"
+        flight, timing = write_swing(video, info, swing, out, cfg, next_impact)
         balls.append(flight)
         timings.append(timing)
+        if panel is not None:
+            sims.append(_write_sim(video, info, swing.impact_s, next_impact, panel, out, cfg))
     balls, ball_median = grade(balls, cfg.ball_good, cfg.ball_poor)
     for n, flight in enumerate(balls, 1):
         write_ball_json(
@@ -109,6 +126,7 @@ def process_video(
             balls=balls,
             ball_median=ball_median,
             timings=timings,
+            sims=sims,
             storage=cfg.storage,
         ),
     )
@@ -213,6 +231,54 @@ def write_swing(
 
     write_pose_csv(swing.track, out / "pose.csv", positions.impact_s, clip_start, info.fps)
     return flight, swing_timing(positions, clip_start, info.fps)
+
+
+@cache
+def _glyphs() -> Glyphs:
+    with as_file(files("golf_etl") / "sim_glyphs.npz") as path:
+        return Glyphs.load(path)
+
+
+def _find_panel(video: Path, info: VideoInfo, impacts: list[float], cfg: Settings) -> Panel | None:
+    """The simulator's readout panel, or None when the video shows none.
+
+    One frame is searched at each PANEL_AFTER_S after the first PANEL_SWINGS impacts, when it
+    falls inside that swing's shot window, and the frames must agree on the box.
+    """
+    found = []
+    for n, impact in enumerate(impacts[:PANEL_SWINGS], 1):
+        next_impact = impacts[n] if n < len(impacts) else None
+        start, end = shot_window(impact, info.duration_s, next_impact, cfg.pre_impact_s)
+        for t in (impact + after for after in PANEL_AFTER_S):
+            if start <= t < end:
+                window = list(read_frames(video, info, t, min(t + 1.5 / info.fps, end)))
+                found += [find_panel(img) for _, img in window[:1]]
+    return pick_panel(found)
+
+
+def _write_sim(
+    video: Path,
+    info: VideoInfo,
+    impact_s: float,
+    next_impact_s: float | None,
+    panel: Panel,
+    out: Path,
+    cfg: Settings,
+) -> SimShot | None:
+    """Read the panel over the swing's shot window and write sim.json; None when the read fails.
+
+    A window the next swing cuts off before the readout appears reads no frames, so every field
+    is blank."""
+    start, end = shot_window(impact_s, info.duration_s, next_impact_s, cfg.pre_impact_s)
+    try:
+        frames = read_frames(video, info, start, end, None, SAMPLE_FPS) if start < end else []
+        shot = read_shot(frames, panel, _glyphs())
+    except Exception:
+        # a read bug costs this swing its numbers, not the whole session
+        log.exception("sim read failed for %s", out.name)
+        return None
+    write_sim_json(out / "sim.json", shot, panel)
+    return shot
 
 
 def _impact_frames(

@@ -11,6 +11,7 @@ from golf_etl.session import (
     video_time,
     write_session_md,
 )
+from golf_etl.sim import FIELDS, SimShot
 from tests.poses import swing_track
 
 WHEN = datetime(2026, 10, 1, 15, 4, tzinfo=UTC)
@@ -107,6 +108,47 @@ def test_timing_row_leaves_durations_out_when_the_top_is_out_of_frame(tmp_path):
     )
     row = "| swing-01 | 144 (11.20s) | hands not seen at the top | 288 (12.40s) | | | |"
     assert row in path.read_text()
+
+
+def test_sim_table_lists_every_swing_with_blanks_for_unread_fields(tmp_path):
+    path = tmp_path / "session.md"
+    read = {
+        "club_speed": "73.2",
+        "ball_speed": "89.7",
+        "smash": "1.23",
+        "carry_raw": "110.0",
+        "carry_game": None,
+        "total_length": "121.4",
+        "peak_height": "33.8",
+        "back_spin": "3365",
+        "total_spin": "3554",
+        "club_path": "1.0 I-O",
+        "face_to_path": "5.5 C",
+        "face_to_target": None,
+    }
+    shot = SimShot(read, {f: 4 if read[f] else 0 for f in FIELDS}, 20, {})
+    swings = [Swing(24.4, 1.0, 16.0, swing_track(24.4)), Swing(49.6, 1.0, 16.0, None)]
+    timing = Timing(23.2, 24.0, 24.4, 144, 240, 288)
+    write_session_md(path, summary(swings=swings, sims=[shot, None], timings=[timing] * 2))
+    text = path.read_text()
+    sim = text.split("## Sim")[1].split("## Timing")[0]
+    assert "`07-after-shot.jpg`" in sim
+    header = (
+        "| Swing | Club mph | Ball mph | Smash | Carry raw yd | Carry game yd | Total yd "
+        "| Peak ft | Back spin | Total spin | Path | Face to path | Face to target |"
+    )
+    assert header in sim
+    assert (
+        "| swing-01 | 73.2 | 89.7 | 1.23 | 110.0 | | 121.4 | 33.8 | 3365 | 3554 "
+        "| 1.0 I-O | 5.5 C | |" in sim
+    )
+    assert "| swing-02 | | | | | | | | | | | | |" in sim
+    assert text.index("| swing-01 | 24.40s") < text.index("## Sim") < text.index("## Timing")
+
+
+def test_session_md_without_a_screen_has_no_sim_table(tmp_path):
+    write_session_md(tmp_path / "session.md", summary(swings=[Swing(12.4, 1.0, 16.0, None)]))
+    assert "## Sim" not in (tmp_path / "session.md").read_text()
 
 
 def test_session_md_with_no_swings_says_so(tmp_path):

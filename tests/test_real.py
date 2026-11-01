@@ -1,6 +1,7 @@
 """Real footage in local/ (gitignored). A test is skipped when its labels are missing, as in CI."""
 
 import hashlib
+import json
 import os
 from datetime import UTC, datetime
 from pathlib import Path
@@ -72,4 +73,50 @@ def test_committed_sim_glyphs_read_labeled_fields_with_no_wrong_number():
     glyphs = Glyphs.load(GLYPHS)
     right, wrong, blank, lines = score(SIM_LABELS, lambda video: glyphs)
     print("\n".join(lines))
+    assert wrong == 0 and blank <= 1
+
+
+def _video_seconds(text: str) -> float:
+    """Seconds from a video time as session.md shows it: 24.45s or 1:05.8."""
+    minutes, _, seconds = text.removesuffix("s").rpartition(":")
+    return int(minutes or 0) * 60 + float(seconds)
+
+
+@needs_sim_labels
+def test_sim_session_matches_the_labels(tmp_path):
+    import yaml
+
+    videos = yaml.safe_load(SIM_LABELS.read_text())["videos"]
+    entry = next(v for v in videos if v["path"] == "IMG_4761.MOV")
+    video = LOCAL / entry["path"]
+    result = process_video(
+        video,
+        tmp_path,
+        Settings(),
+        source_name=video.name,
+        checksum="4761",
+        uploaded_at=datetime.now(UTC),
+    )
+    text = (result.session_dir / "session.md").read_text()
+    assert "## Sim" in text, "no readout panel found"
+    print(text.split("## Sim")[1].split("## Timing")[0])
+    swing_rows = text.split("## Sim")[0].splitlines()
+    impacts = {
+        row.split(" | ")[0].removeprefix("| "): _video_seconds(row.split(" | ")[1])
+        for row in swing_rows
+        if row.startswith("| swing-")
+    }
+    wrong = blank = 0
+    for shot in entry["shots"]:
+        impact = float(shot.pop("impact"))
+        swing = next((s for s, t in impacts.items() if abs(t - impact) <= 1.0), None)
+        assert swing, f"no swing within 1s of the shot at {impact}s"
+        fields = json.loads((result.session_dir / swing / "sim.json").read_text())["fields"]
+        print(f"{impact}s is {swing} at {impacts[swing]}s")
+        for field, label in shot.items():
+            read = fields[field]["text"]
+            if read != str(label):
+                print(f"  {field}: read {read}, label {label}")
+                wrong += read is not None
+                blank += read is None
     assert wrong == 0 and blank <= 1
