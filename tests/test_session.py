@@ -137,7 +137,7 @@ def test_sim_table_lists_every_swing_with_blanks_for_unread_fields(tmp_path):
     write_session_md(path, summary(swings=swings, sims=sims, timings=[timing] * 3))
     text = path.read_text()
     sim = text.split("## Sim")[1].split("## Timing")[0]
-    assert "`07-after-shot.jpg`" in sim and "next swing" in sim
+    assert "`07-after-shot.jpg`" in sim and "next swing" in sim and "did not change" in sim
     header = (
         "| Swing | Club mph | Ball mph | Smash | Carry raw yd | Carry game yd | Total yd "
         "| Peak ft | Back spin | Total spin | Path | Face to path | Face to target |"

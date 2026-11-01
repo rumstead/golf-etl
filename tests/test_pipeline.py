@@ -236,24 +236,39 @@ def test_a_video_without_a_screen_writes_no_sim_json(tmp_path, caplog):
     assert "no readout panel: 0 of 3 frames matched" in caplog.text
 
 
-@pytest.fixture(scope="module")
-def screen_video(tmp_path_factory):
-    """12s of a still 1920x1080 frame with the IMG_4761 readout panel where the video has it."""
-    rgb, _ = load("4761-s1")
+def _screen_still(name: str) -> np.ndarray:
+    """A 1920x1080 frame with a fixture's readout panel where IMG_4761 has it."""
+    rgb, _ = load(name)
     # the fixture's panel at (40, 40) sits at (1381, 203) in the video
     still = np.empty((1080, 1920, 3), np.uint8)
-    still[:] = rgb[0, 0]
+    still[:] = load("4761-s1")[0][0, 0]
     still[163 : 163 + rgb.shape[0], 1341 : 1341 + rgb.shape[1]] = rgb
-    folder = tmp_path_factory.mktemp("screen")
-    png = folder / "screen.png"
-    cv2.imwrite(str(png), cv2.cvtColor(still, cv2.COLOR_RGB2BGR))
-    video = folder / "screen.mp4"
+    return still
+
+
+def _still_video(path, stills: list[tuple[np.ndarray, float]]):
+    """A 10fps video showing each (frame, seconds) in turn."""
+    inputs, streams = [], ""
+    for k, (still, seconds) in enumerate(stills):
+        png = path.with_name(f"{path.stem}-{k}.png")
+        cv2.imwrite(str(png), cv2.cvtColor(still, cv2.COLOR_RGB2BGR))
+        inputs += ["-loop", "1", "-framerate", "10", "-t", str(seconds), "-i", str(png)]
+        streams += f"[{k}:v]"
     subprocess.run(
-        ["ffmpeg", "-y", "-v", "error", "-loop", "1", "-i", str(png), "-t", "12", "-r", "10"]
-        + ["-c:v", "libx264", "-crf", "12", "-pix_fmt", "yuv420p", str(video)],
+        ["ffmpeg", "-y", "-v", "error", *inputs, "-filter_complex"]
+        + [f"{streams}concat=n={len(stills)}:v=1[v]", "-map", "[v]", "-r", "10"]
+        + ["-c:v", "libx264", "-crf", "12", "-pix_fmt", "yuv420p", str(path)],
         check=True,
     )
-    return video
+    return path
+
+
+@pytest.fixture(scope="module")
+def screen_video(tmp_path_factory):
+    """16s of IMG_4762's readout panel for 3s, then IMG_4761's, where IMG_4761 has its panel."""
+    folder = tmp_path_factory.mktemp("screen")
+    stills = [(_screen_still("4762-s8"), 3.0), (_screen_still("4761-s1"), 13.0)]
+    return _still_video(folder / "screen.mp4", stills)
 
 
 def _sim(session_dir, n):
@@ -264,6 +279,7 @@ def test_a_video_with_a_screen_writes_sim_json(tmp_path, screen_video):
     result = _process(screen_video, tmp_path / "out", [1.0])
     sim = _sim(result.session_dir, 1)
     assert sim["fields"]["club_speed"]["text"] == "73.2"
+    assert sim["unchanged"] is False
     text = (result.session_dir / "session.md").read_text()
     row = next(r for r in text.split("## Sim")[1].splitlines() if r.startswith("| swing-01"))
     assert row.startswith("| swing-01 | 73.2 |")
@@ -278,10 +294,21 @@ def test_a_swing_with_no_time_before_the_next_still_gets_a_blank_sim_json(tmp_pa
     assert _sim(result.session_dir, 2)["fields"]["club_speed"]["text"] == "73.2"
 
 
+def test_a_swing_with_the_same_numbers_on_screen_before_impact_reads_blank(tmp_path, screen_video):
+    # IMG_4761's panel is up from 3s, so a swing at 6s left the screen as it was
+    result = _process(screen_video, tmp_path / "out", [6.0])
+    sim = _sim(result.session_dir, 1)
+    assert sim["unchanged"] is True
+    assert sim["frames"] > 0
+    assert all(f["text"] is None for f in sim["fields"].values())
+    text = (result.session_dir / "session.md").read_text()
+    assert "| swing-01 | | | | | | | | | | | | |" in text.split("## Sim")[1]
+
+
 def test_a_swing_that_fails_to_read_gets_no_sim_json(tmp_path, screen_video, monkeypatch):
     from golf_etl import pipeline
 
-    def broken(frames, panel, glyphs):
+    def broken(frames, panel, glyphs, before):
         raise ValueError("unreadable")
 
     monkeypatch.setattr(pipeline, "read_shot", broken)

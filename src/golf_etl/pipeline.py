@@ -34,6 +34,7 @@ from golf_etl.sim import (
     Glyphs,
     Panel,
     SimShot,
+    before_window,
     find_panel,
     pick_panel,
     read_shot,
@@ -102,12 +103,13 @@ def process_video(
     balls, timings, sims = [], [], []
     for n, swing in enumerate(detection.swings, 1):
         next_impact = impacts[n] if n < len(impacts) else None
+        neighbors = (impacts[n - 2] if n > 1 else None, next_impact)
         out = session_dir / f"swing-{n:02d}"
         flight, timing = write_swing(video, info, swing, out, cfg, next_impact)
         balls.append(flight)
         timings.append(timing)
         if panel is not None:
-            sims.append(_write_sim(video, info, swing.impact_s, next_impact, panel, out, cfg))
+            sims.append(_write_sim(video, info, swing.impact_s, neighbors, panel, out, cfg))
     balls, ball_median = grade(balls, cfg.ball_good, cfg.ball_poor)
     for n, flight in enumerate(balls, 1):
         write_ball_json(
@@ -269,23 +271,33 @@ def _write_sim(
     video: Path,
     info: VideoInfo,
     impact_s: float,
-    next_impact_s: float | None,
+    neighbors: tuple[float | None, float | None],
     panel: Panel,
     out: Path,
     cfg: Settings,
 ) -> SimShot | None:
     """Read the panel over the swing's shot window and write sim.json; None when the read fails.
 
-    A window the next swing cuts off before the readout appears reads no frames, so every field
-    is blank."""
+    `neighbors` are the previous and next swings' impacts. A window the next swing cuts off
+    before the readout appears reads no frames, so every field is blank. The frames just before
+    impact are read too, to tell whether the screen changed."""
+    previous_impact_s, next_impact_s = neighbors
     start, end = shot_window(impact_s, info.duration_s, next_impact_s, cfg.pre_impact_s)
+    before_start, before_end = before_window(impact_s, previous_impact_s)
     try:
         frames = read_frames(video, info, start, end, None, SAMPLE_FPS) if start < end else []
-        shot = read_shot(frames, panel, _glyphs())
+        before = (
+            read_frames(video, info, before_start, before_end, None, SAMPLE_FPS)
+            if before_start < before_end
+            else []
+        )
+        shot = read_shot(frames, panel, _glyphs(), before)
     except Exception:
         # a read bug costs this swing its numbers, not the whole session
         log.exception("sim read failed for %s", out.name)
         return None
+    if shot.unchanged:
+        log.info("%s: the screen did not change after impact; sim fields left blank", out.name)
     write_sim_json(out / "sim.json", shot, panel)
     return shot
 

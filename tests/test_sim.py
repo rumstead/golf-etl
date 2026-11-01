@@ -15,6 +15,7 @@ from golf_etl.sim import (
     SimShot,
     _read,
     _split,
+    before_window,
     build_glyphs,
     cut_glyphs,
     find_panel,
@@ -312,6 +313,40 @@ def test_read_shot_reads_every_labeled_field_from_repeated_frames(glyphs):
         assert shot.first_seen_s.get(f) == (2.0 if want[f] else None)
 
 
+def test_a_screen_that_shows_the_same_numbers_before_impact_reads_blank(glyphs):
+    frames, _ = _shot_frames()
+    before = [(1.0, frames[0][1]), (1.5, frames[0][1])]
+    shot = read_shot(frames, Panel(PANEL_BOXES["4761-s1"], 0.5), glyphs, before)
+    assert shot.unchanged
+    assert shot.values == dict.fromkeys(FIELDS)
+    assert shot.votes == dict.fromkeys(FIELDS, 0)
+    assert shot.first_seen_s == {}
+    assert shot.frames == 3
+
+
+def test_a_screen_that_shows_another_shot_before_impact_reads_the_new_one(glyphs):
+    frames, labels = _shot_frames()
+    rgb, _ = load("4762-s8")  # another shot's panel, 2 px off the box
+    shot = read_shot(frames, Panel(PANEL_BOXES["4761-s1"], 0.5), glyphs, [(1.0, rgb)] * 2)
+    assert not shot.unchanged
+    assert shot.values["club_speed"] == labels["club_speed"]
+
+
+def test_no_reads_before_impact_leave_the_shot_as_read(glyphs):
+    frames, labels = _shot_frames()
+    blank = np.empty_like(frames[0][1])
+    blank[:] = frames[0][1][0, 0]
+    shot = read_shot(frames, Panel(PANEL_BOXES["4761-s1"], 0.5), glyphs, [(1.0, blank)] * 2)
+    assert not shot.unchanged
+    assert shot.values["club_speed"] == labels["club_speed"]
+
+
+def test_before_window_stays_clear_of_the_previous_impact_and_the_video_start():
+    assert before_window(100.0, 80.0) == (98.5, 99.75)
+    assert before_window(100.0, 99.0) == (100.0, 99.75)  # empty: the previous shot just landed
+    assert before_window(1.0, None) == (0.0, 0.75)
+
+
 def test_sim_json_has_every_field(tmp_path, glyphs):
     frames, labels = _shot_frames()
     panel = Panel(PANEL_BOXES["4761-s1"], 0.5)
@@ -320,6 +355,7 @@ def test_sim_json_has_every_field(tmp_path, glyphs):
     data = json.loads((tmp_path / "sim.json").read_text())
     assert data["panel"] == list(panel.box)
     assert data["frames"] == 3
+    assert data["unchanged"] is False
     assert list(data["fields"]) == list(FIELDS)
     for f in FIELDS:
         entry = data["fields"][f]

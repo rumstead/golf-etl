@@ -94,6 +94,11 @@ MIN_VOTES = 2  # reads a field's winner needs
 LEAD = 2  # the winner needs this many times the runner-up's votes
 PANEL_AGREE_PX = 2  # panels this close on every edge are the same panel
 MIN_PANELS = 3  # agreeing panels needed to trust a box
+# The screen switches to a new shot 0.25 to 0.5s after impact, so up to BEFORE_END_S before impact
+# it still shows the previous shot, and from BEFORE_START_S before (but at least AFTER_PREVIOUS_S
+# after the previous swing's impact) the previous shot's numbers are up.
+BEFORE_START_S, BEFORE_END_S, AFTER_PREVIOUS_S = 1.5, 0.25, 1.0
+MIN_COMPARED = 4  # fields read before and after impact needed to call the screen unchanged
 
 Box = tuple[int, int, int, int]  # x0, x1, y0, y1
 
@@ -110,6 +115,7 @@ class SimShot:
     votes: dict[str, int]  # reads of the winning text, 0 for a blank field
     frames: int
     first_seen_s: dict[str, float]  # when each winning text first appeared; no entry for a blank
+    unchanged: bool = False  # the screen showed the same numbers before impact; every field blank
 
 
 @dataclass(frozen=True)
@@ -199,6 +205,14 @@ def shot_window(
     return impact_s + START_AFTER_S, min(ends)
 
 
+def before_window(impact_s: float, previous_impact_s: float | None) -> tuple[float, float]:
+    """The span of video before impact that still shows the previous shot's numbers."""
+    starts = [0.0, impact_s - BEFORE_START_S]
+    if previous_impact_s is not None:
+        starts.append(previous_impact_s + AFTER_PREVIOUS_S)
+    return max(starts), impact_s - BEFORE_END_S
+
+
 def vote(reads: list[str | None]) -> tuple[str | None, int]:
     """The winning read and its count, or (None, 0) when no read clearly wins.
 
@@ -215,21 +229,64 @@ def vote(reads: list[str | None]) -> tuple[str | None, int]:
     return text, votes
 
 
-def read_shot(frames: Iterable[tuple[float, np.ndarray]], panel: Panel, glyphs: Glyphs) -> SimShot:
-    """Every field read in each (time, RGB frame) and voted across the frames."""
-    boxes = value_boxes(panel.box)
-    reads: dict[str, list[tuple[float, str | None]]] = {f: [] for f in FIELDS}
-    count = 0
-    for t, frame in frames:
-        count += 1
-        for field, (x0, x1, y0, y1) in zip(FIELDS, boxes, strict=True):
-            reads[field].append((t, read_cell(frame[y0:y1, x0:x1], field, glyphs)))
+def read_shot(
+    frames: Iterable[tuple[float, np.ndarray]],
+    panel: Panel,
+    glyphs: Glyphs,
+    before: Iterable[tuple[float, np.ndarray]] = (),
+) -> SimShot:
+    """Every field read in each (time, RGB frame) and voted across the frames.
+
+    `before` are frames from just before impact. When most fields read there equal the winners,
+    the screen never showed a new shot: a swing the simulator did not register, or no shot at
+    all, still has the previous shot on screen. Every field is then blank and `unchanged` set.
+    """
+    reads = _reads(frames, panel, glyphs)
     values, votes, first_seen = {}, {}, {}
     for field, found in reads.items():
         values[field], votes[field] = vote([text for _, text in found])
         if values[field] is not None:
             first_seen[field] = next(t for t, text in found if text == values[field])
+    count = len(reads[FIELDS[0]])
+    if _unchanged(_reads(before, panel, glyphs), values):
+        return SimShot(dict.fromkeys(FIELDS), dict.fromkeys(FIELDS, 0), count, {}, unchanged=True)
     return SimShot(values, votes, count, first_seen)
+
+
+def _reads(
+    frames: Iterable[tuple[float, np.ndarray]], panel: Panel, glyphs: Glyphs
+) -> dict[str, list[tuple[float, str | None]]]:
+    """Each field's (time, text) in every frame."""
+    boxes = value_boxes(panel.box)
+    reads: dict[str, list[tuple[float, str | None]]] = {f: [] for f in FIELDS}
+    for t, frame in frames:
+        for field, (x0, x1, y0, y1) in zip(FIELDS, boxes, strict=True):
+            reads[field].append((t, read_cell(frame[y0:y1, x0:x1], field, glyphs)))
+    return reads
+
+
+def compare_before(
+    before: dict[str, list[tuple[float, str | None]]], values: dict[str, str | None]
+) -> tuple[int, int]:
+    """How many fields read both before impact and after it, and how many of them are equal.
+
+    A field's read before impact is its most common text in the frames there.
+    """
+    compared = equal = 0
+    for field, found in before.items():
+        top = Counter(text for _, text in found if text is not None).most_common(1)
+        if top and values.get(field) is not None:
+            compared += 1
+            equal += top[0][0] == values[field]
+    return compared, equal
+
+
+def _unchanged(
+    before: dict[str, list[tuple[float, str | None]]], values: dict[str, str | None]
+) -> bool:
+    """Whether at least MIN_COMPARED fields compare and more than half of them are equal."""
+    compared, equal = compare_before(before, values)
+    return compared >= MIN_COMPARED and equal * 2 > compared
 
 
 def write_sim_json(path: Path, shot: SimShot, panel: Panel) -> None:
@@ -243,7 +300,12 @@ def write_sim_json(path: Path, shot: SimShot, panel: Panel) -> None:
             "votes": shot.votes.get(field, 0),
             "seen_s": shot.first_seen_s.get(field) if text else None,
         }
-    data = {"panel": list(panel.box), "frames": shot.frames, "fields": fields}
+    data = {
+        "panel": list(panel.box),
+        "frames": shot.frames,
+        "unchanged": shot.unchanged,
+        "fields": fields,
+    }
     path.write_text(json.dumps(data, indent=2) + "\n")
 
 
