@@ -44,6 +44,7 @@ MIN_BOTTOM = 0.3  # of the cell height; a blob ending above this is noise from t
 EDGE_MARGIN = UPSCALE  # px; a blob this close to the left or right edge is the cell border
 # Blur can merge a whole value into one blob, so the cell sets the digit size, not the tallest blob.
 DIGIT_HEIGHT = 0.57  # fraction of the value cell's height a digit fills
+SPACE_GAP = 0.48  # of the digit height; the gap before a suffix is at least this wide
 MARK_HEIGHT = 0.3  # of the digit height; anything shorter is a point or a dash
 DOT_WIDTH = 2.2  # heights; a wider mark is a dash
 SPLIT_HEIGHT = 0.6  # of the digit height; a shorter blob that is not a mark is a broken glyph
@@ -146,7 +147,8 @@ def build_glyphs(samples: Iterable[tuple[np.ndarray, str]], per_class: int = 80)
 
 def read_cell(cell: np.ndarray, field: str, glyphs: Glyphs) -> str | None:
     """The cell's text as the screen shows it, or None when no clear read fits the field."""
-    reads = [text for cut in _cuts(cell) if (text := _read(cut, field, glyphs))]
+    digit = DIGIT_HEIGHT * UPSCALE * cell.shape[0]
+    reads = [text for cut in _cuts(cell) if (text := _read(cut, field, glyphs, digit))]
     top = Counter(reads).most_common(2)
     if not top or (len(top) == 2 and top[0][1] == top[1][1]):
         return None
@@ -161,19 +163,45 @@ def _cuts(cell: np.ndarray) -> list[list[str | Glyph]]:
     return [_cut(dist, threshold) for threshold in THRESHOLDS]
 
 
-def _read(cut: list[str | Glyph], field: str, glyphs: Glyphs) -> str | None:
+def _read(cut: list[str | Glyph], field: str, glyphs: Glyphs, digit: float) -> str | None:
     """One threshold's text, or None when a glyph is broken or the text does not fit the field.
 
-    The screen puts a space before a suffix, so the suffix starts after the widest gap.
+    `digit` is the digit height in upscaled px.
     """
     found = [g for g in cut if isinstance(g, Glyph)]
     if BROKEN in cut or not found:
         return None
     chars = [_classify(g, glyphs) for g in found]
-    if field in SUFFIX_LENGTH and len(found) > 1:
-        gaps = [b.left - a.right for a, b in pairwise(found)]
-        chars.insert(int(np.argmax(gaps)) + 1, " ")
+    if field in SUFFIX_LENGTH:
+        start = _suffix_start(cut, field, digit)
+        if start is None:
+            return None
+        chars.insert(start, " ")
     return _text(field, "".join(chars))
+
+
+def _suffix_start(cut: list[str | Glyph], field: str, digit: float) -> int | None:
+    """Index of the first suffix glyph, or None when the cut has no clear space before it.
+
+    The suffix starts after the widest gap between glyphs, which must be space wide. A "." after
+    the first glyph and before the suffix must sit the field's decimals left of the space; a "."
+    inside the suffix is the path's dash.
+    """
+    found = [g for g in cut if isinstance(g, Glyph)]
+    if len(found) < 2:
+        return None
+    gaps = [b.left - a.right for a, b in pairwise(found)]
+    start = int(np.argmax(gaps)) + 1
+    if gaps[start - 1] < SPACE_GAP * digit:
+        return None
+    point = start - DECIMALS.get(field, 1)  # glyphs left of the decimal point
+    before = 0
+    for item in cut:
+        if isinstance(item, Glyph):
+            before += 1
+        elif item == "." and 0 < before <= start and before != point:
+            return None
+    return start
 
 
 def _distance(cell: np.ndarray) -> np.ndarray:

@@ -1,7 +1,20 @@
 import numpy as np
 import pytest
 
-from golf_etl.sim import FIELDS, Glyphs, _split, _text, build_glyphs, read_cell, value_boxes
+from golf_etl.sim import (
+    DIGIT_HEIGHT,
+    FIELDS,
+    THRESHOLDS,
+    UPSCALE,
+    Glyph,
+    Glyphs,
+    _read,
+    _split,
+    build_glyphs,
+    cut_glyphs,
+    read_cell,
+    value_boxes,
+)
 from tests.sim_fixtures import load
 
 MARGIN = 40  # px around the panel in every fixture
@@ -64,10 +77,31 @@ def test_a_panel_box_off_by_two_pixels_reads_no_wrong_number(name, glyphs):
                 assert read_cell(cells[f], f, glyphs) in (labels[f], None), (box_error, f)
 
 
-def test_a_lost_suffix_glyph_reads_nothing():
-    assert _text("club_path", "10 IO") == "1.0 I-O"
-    assert _text("club_path", "100I") is None
-    assert _text("face_to_path", "140") is None
+@pytest.mark.parametrize(
+    ("name", "field"),
+    [
+        ("4761-s1", "face_to_target"),
+        ("4758-s1-white", "face_to_path"),
+        ("4761-s1", "club_path"),
+        ("4762-s8", "club_path"),
+        ("4758-s1-white", "club_path"),
+    ],
+)
+def test_a_suffix_field_without_its_last_glyph_reads_nothing(name, field, glyphs):
+    cells, labels = _cells(name)
+    cell = cells[field]
+    assert read_cell(cell, field, glyphs) == labels[field]
+    digit = DIGIT_HEIGHT * UPSCALE * cell.shape[0]
+    for threshold in THRESHOLDS:
+        cut = cut_glyphs(cell, threshold)
+        last = max(i for i, g in enumerate(cut) if isinstance(g, Glyph))
+        assert _read(cut[:last] + cut[last + 1 :], field, glyphs, digit) is None, threshold
+
+
+def test_a_number_with_no_space_does_not_read_as_a_face(glyphs):
+    # "110.0" is what "11.0 C" looks like with the C lost; its widest gap is the decimal point
+    cells, _ = _cells("4761-s1")
+    assert read_cell(cells["carry_raw"], "face_to_path", glyphs) is None
 
 
 def test_a_blob_too_narrow_for_its_digit_count_is_not_cut():
