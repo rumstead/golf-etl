@@ -55,6 +55,10 @@ CUT_SEARCH = 0.25  # digit widths around an even split searched for the darkest 
 GLYPH_SIZE = (12, 20)  # width, height
 ASPECT_WEIGHT = 0.5
 CLASS_MARGIN = 0.10  # score a glyph's class must beat every other class by, 0 and O as one
+LONE_MATCH = 0.775  # best template score every glyph needs when only one threshold reads the cell
+MAX_STEP = 0.95  # of the digit height; neighbor digits sit up to 0.67 apart, 0.89 across the point
+TRIM_WIDTH = 0.58  # of the digit height; a wider piece can have the decimal point stuck to it
+MAX_WIDTH = 0.62  # of the digit height; no digit is wider once the point is trimmed off
 
 CLASSES = "0123456789ICO"
 SUFFIX_LENGTH = {"club_path": 2, "face_to_path": 1, "face_to_target": 1}
@@ -175,11 +179,14 @@ def build_glyphs(samples: Iterable[tuple[np.ndarray, str]], per_class: int = 80)
 def read_cell(cell: np.ndarray, field: str, glyphs: Glyphs) -> str | None:
     """The cell's text as the screen shows it, or None when no clear read fits the field."""
     digit = DIGIT_HEIGHT * UPSCALE * cell.shape[0]
-    reads = [text for cut in _cuts(cell) if (text := _read(cut, field, glyphs, digit))]
-    top = Counter(reads).most_common(2)
+    reads = [read for cut in _cuts(cell) if (read := _scored_read(cut, field, glyphs, digit))]
+    top = Counter(text for text, _ in reads).most_common(2)
     if not top or (len(top) == 2 and top[0][1] == top[1][1]):
         return None
-    return top[0][0]
+    text, votes = top[0]
+    if votes == 1 and min(score for t, score in reads if t == text) < LONE_MATCH:
+        return None
+    return text
 
 
 def _best_panel(frame: np.ndarray) -> Panel | None:
@@ -312,40 +319,66 @@ def _read(cut: list[str | Glyph], field: str, glyphs: Glyphs, digit: float) -> s
 
     `digit` is the digit height in upscaled px.
     """
+    read = _scored_read(cut, field, glyphs, digit)
+    return read[0] if read else None
+
+
+def _scored_read(
+    cut: list[str | Glyph], field: str, glyphs: Glyphs, digit: float
+) -> tuple[str, float] | None:
+    """`_read`'s text and the weakest glyph's best template score."""
     found = [g for g in cut if isinstance(g, Glyph)]
     if BROKEN in cut or not found:
         return None
-    chars = [_classify(g, glyphs) for g in found]
+    matches = [_match(g, glyphs) for g in found]
+    chars = [char for char, _ in matches]
+    end = len(found)
     if field in SUFFIX_LENGTH:
-        start = _suffix_start(cut, field, digit)
+        start = _suffix_start(found, digit)
         if start is None:
             return None
         chars.insert(start, " ")
-    return _text(field, "".join(chars))
+        end = start
+    if not _number_fits(cut, end, field, digit):
+        return None
+    text = _text(field, "".join(chars))
+    return (text, min(score for _, score in matches)) if text else None
 
 
-def _suffix_start(cut: list[str | Glyph], field: str, digit: float) -> int | None:
+def _suffix_start(found: list[Glyph], digit: float) -> int | None:
     """Index of the first suffix glyph, or None when the cut has no clear space before it.
 
-    The suffix starts after the widest gap between glyphs, which must be space wide. A "." after
-    the first glyph and before the suffix must sit the field's decimals left of the space; a "."
-    inside the suffix is the path's dash.
+    The suffix starts after the widest gap between glyphs, which must be space wide.
     """
-    found = [g for g in cut if isinstance(g, Glyph)]
     if len(found) < 2:
         return None
     gaps = [b.left - a.right for a, b in pairwise(found)]
     start = int(np.argmax(gaps)) + 1
-    if gaps[start - 1] < SPACE_GAP * digit:
-        return None
-    point = start - DECIMALS.get(field, 1)  # glyphs left of the decimal point
-    before = 0
+    return None if gaps[start - 1] < SPACE_GAP * digit else start
+
+
+def _number_fits(cut: list[str | Glyph], end: int, field: str, digit: float) -> bool:
+    """Whether the first `end` glyphs look like one whole number.
+
+    A digit that vanished leaves a gap wider than MAX_STEP between digit centers, and a digit
+    that broke into marks leaves a "-" or a stray ".". The only mark allowed up to the space is
+    one "." the field's decimals left of the number's end. A "-" in the space or after it belongs
+    to the suffix, such as the path's dash.
+    """
+    found = [g for g in cut if isinstance(g, Glyph)][:end]
+    centers = [(g.left + g.right) / 2 for g in found]
+    if any(b - a > MAX_STEP * digit for a, b in pairwise(centers)):
+        return False
+    point = end - DECIMALS.get(field, 1)  # glyphs left of the decimal point
+    before = points = 0
     for item in cut:
         if isinstance(item, Glyph):
             before += 1
-        elif item == "." and 0 < before <= start and before != point:
-            return None
-    return start
+        elif before < end or (before == end and (item == "." or field not in SUFFIX_LENGTH)):
+            points += item == "."
+            if item != "." or before != point or point == end or points > 1:
+                return False
+    return True
 
 
 def _distance(cell: np.ndarray) -> np.ndarray:
@@ -360,20 +393,57 @@ def _cut(dist: np.ndarray, threshold: float) -> list[str | Glyph]:
     lo, hi = np.percentile(dist, PERCENTILES)
     mask = (dist > lo + threshold * (hi - lo)).astype(np.uint8)
     digit = DIGIT_HEIGHT * dist.shape[0]
-    out: list[str | Glyph] = []
+    found: list[tuple[str | Glyph, int, int]] = []  # item, top, bottom
     for blob in _blobs(mask):
         pieces = _split(blob, dist * mask, digit)
         if pieces is None:
-            out.append(BROKEN)
+            found.append((BROKEN, blob[1], blob[1] + blob[3]))
             continue
-        for x, y, w, h in pieces:
-            if h < MARK_HEIGHT * digit:
-                below_middle = y + h / 2 > dist.shape[0] / 2
-                out.append("." if below_middle and w < DOT_WIDTH * h else "-")
-            elif h < SPLIT_HEIGHT * digit:
-                out.append(BROKEN)
-            else:
-                out.append(_glyph(dist[y : y + h, x : x + w], x))
+        for piece in pieces:
+            for x, y, w, h in _trim_points(piece, mask, digit):
+                if h < MARK_HEIGHT * digit:
+                    below_middle = y + h / 2 > dist.shape[0] / 2
+                    mark = "." if below_middle and w < DOT_WIDTH * h else "-"
+                    found.append((mark, y, y + h))
+                elif h < SPLIT_HEIGHT * digit or w > MAX_WIDTH * digit:
+                    found.append((BROKEN, y, y + h))
+                else:
+                    found.append((_glyph(dist[y : y + h, x : x + w], x), y, y + h))
+    # A mark above or below every glyph is from the cell's label or border, not the number.
+    rows = [(top, bottom) for item, top, bottom in found if isinstance(item, Glyph)]
+    if not rows:
+        return [item for item, _, _ in found]
+    top, bottom = min(t for t, _ in rows), max(b for _, b in rows)
+    return [item for item, t, b in found if isinstance(item, Glyph) or (b > top and t < bottom)]
+
+
+def _trim_points(piece: Box, mask: np.ndarray, digit: float) -> list[Box]:
+    """A piece wider than TRIM_WIDTH split into a decimal point stuck to either side and the rest.
+
+    The point's columns are the ones at the piece's ends with ink only in its bottom MARK_HEIGHT.
+    Pieces are (x, y, w, h), each cropped to its ink rows.
+    """
+    x, y, w, h = piece
+    if h < SPLIT_HEIGHT * digit or w <= TRIM_WIDTH * digit:
+        return [piece]
+    ink = mask[y : y + h, x : x + w] > 0
+    first = np.where(ink.any(axis=0), ink.argmax(axis=0), h)  # top ink row of each column
+    low = first >= h - MARK_HEIGHT * digit
+    left = 0
+    while left < w and low[left]:
+        left += 1
+    right = w
+    while right > left and low[right - 1]:
+        right -= 1
+    if right - left < 1:
+        return [piece]
+    out = []
+    for a, b in ((0, left), (left, right), (right, w)):
+        if b <= a:
+            continue
+        rows = np.where(ink[:, a:b].any(axis=1))[0]
+        if rows.size:
+            out.append((x + a, y + int(rows[0]), b - a, int(rows[-1] - rows[0] + 1)))
     return out
 
 
@@ -437,16 +507,16 @@ def _spread(items: list[Glyph], limit: int) -> list[Glyph]:
     return [items[i] for i in np.linspace(0, len(items) - 1, limit).round().astype(int)]
 
 
-def _classify(glyph: Glyph, glyphs: Glyphs) -> str:
-    """The best template's class, or BROKEN when another class scores within CLASS_MARGIN."""
+def _match(glyph: Glyph, glyphs: Glyphs) -> tuple[str, float]:
+    """The best template's class and score; BROKEN when another class scores within CLASS_MARGIN."""
     scores = glyphs.features @ glyph.image.ravel()
     scores -= ASPECT_WEIGHT * np.abs(glyphs.aspects - glyph.aspect)
     best = int(np.argmax(scores))
     groups = np.where(glyphs.labels == "O", "0", glyphs.labels)
     rivals = scores[groups != groups[best]]
     if rivals.size and scores[best] - rivals.max() < CLASS_MARGIN:
-        return BROKEN
-    return str(glyphs.labels[best])
+        return BROKEN, float(scores[best])
+    return str(glyphs.labels[best]), float(scores[best])
 
 
 def _text(field: str, chars: str) -> str | None:

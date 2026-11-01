@@ -37,8 +37,12 @@ PANEL_BOXES = {
 # IMG_4758 frames cut to (1170, 1380, 200, 520) at 119 s and (1190, 1360, 225, 485) at 72 s
 ROW_LOW_BOX = (51, 158, 48, 259)
 NO_LABELS_BOX = (31, 138, 23, 234)
-# The dim 4 breaks apart in this single tinted frame, so the cell reads blank.
-READS_BLANK = {("4758-s2-tinted", "club_path")}
+READS_BLANK = {
+    ("4758-s2-tinted", "club_path"),  # the dim 4 breaks apart in this single tinted frame
+    ("4758-s1-white", "club_speed"),  # a stray dot between the 9 and the 1 is not a decimal point
+    ("4758-s2-tinted", "ball_speed"),  # the 2 and the 5 match no class clearly at any threshold
+    ("4758-s2-tinted", "total_spin"),  # a dot after the last digit, and spin has no decimals
+}
 
 
 # (x0, x1, y0, y1) px added to the panel box: moved 2px each way, then grown and shrunk 2px
@@ -226,3 +230,40 @@ def test_reads_through_the_found_box_give_no_wrong_number(name, glyphs):
     for f, (x0, x1, y0, y1) in zip(FIELDS, boxes, strict=True):
         if labels[f]:
             assert read_cell(rgb[y0:y1, x0:x1], f, glyphs) in (labels[f], None), f
+
+
+# IMG_4758 frames cut to the found panel box plus 12 px: 4758-fragments at 48.5 s,
+# 4758-merged-point at 45.5 s and 4758-vanished-digit at 46.0 s
+REAL_BOX = (12, 120, 12, 223)
+
+
+def _real_cell(name: str, field: str) -> tuple[np.ndarray, str]:
+    rgb, labels = load(name)
+    x0, x1, y0, y1 = value_boxes(REAL_BOX)[FIELDS.index(field)]
+    return rgb[y0:y1, x0:x1], labels[field]
+
+
+@pytest.mark.parametrize("field", ["carry_raw", "back_spin", "total_spin"])
+def test_a_digit_broken_into_marks_reads_nothing(field, glyphs):
+    # the 9 and 6 of 196.2 and the 4 of 3142 break into dots and dashes
+    cell, _ = _real_cell("4758-fragments", field)
+    assert read_cell(cell, field, glyphs) is None
+
+
+@pytest.mark.parametrize("field", ["carry_raw", "ball_speed"])
+def test_a_decimal_point_stuck_to_a_digit_is_cut_off(field, glyphs):
+    # the point touches the 6 of 196.2 and the 5 of 124.5
+    cell, label = _real_cell("4758-merged-point", field)
+    assert read_cell(cell, field, glyphs) == label
+
+
+def test_a_vanished_digit_reads_nothing(glyphs):
+    # the 0 of 107.7 is gone at the higher thresholds
+    cell, _ = _real_cell("4758-vanished-digit", "peak_height")
+    assert read_cell(cell, "peak_height", glyphs) is None
+
+
+def test_a_weak_read_from_one_threshold_reads_nothing(glyphs):
+    # IMG_4758 at 138.5 s, the total_spin cell: only the 0.8 cut reads, and its broken 8 reads 9
+    cell, _ = load("4758-lone-read")
+    assert read_cell(cell, "total_spin", glyphs) is None
