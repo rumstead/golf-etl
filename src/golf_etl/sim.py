@@ -56,7 +56,9 @@ CUT_SEARCH = 0.25  # digit widths around an even split searched for the darkest 
 GLYPH_SIZE = (12, 20)  # width, height
 ASPECT_WEIGHT = 0.5
 CLASS_MARGIN = 0.10  # score a glyph's class must beat every other class by, 0 and O as one
-LONE_MATCH = 0.775  # best template score every glyph needs when only one threshold reads the cell
+# Best template score every glyph needs when only one threshold reads the cell: the highest value
+# that cost under 2% of the held-out right reads on IMG_4758.
+LONE_MATCH = 0.775
 MAX_STEP = 0.95  # of the digit height; neighbor digits sit up to 0.67 apart, 0.89 across the point
 TRIM_WIDTH = 0.58  # of the digit height; a wider piece can have the decimal point stuck to it
 MAX_WIDTH = 0.62  # of the digit height; no digit is wider once the point is trimmed off
@@ -642,7 +644,8 @@ def _cut(dist: np.ndarray, threshold: float) -> list[str | Glyph]:
                     found.append((BROKEN, y, y + h))
                 else:
                     found.append((_glyph(dist[y : y + h, x : x + w], x), y, y + h))
-    # A mark above or below every glyph is from the cell's label or border, not the number.
+    # A mark or broken piece above or below every glyph is from the cell's label or border, not
+    # the number.
     rows = [(top, bottom) for item, top, bottom in found if isinstance(item, Glyph)]
     if not rows:
         return [item for item, _, _ in found]
