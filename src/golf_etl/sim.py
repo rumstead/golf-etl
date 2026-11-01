@@ -60,6 +60,16 @@ LONE_MATCH = 0.775  # best template score every glyph needs when only one thresh
 MAX_STEP = 0.95  # of the digit height; neighbor digits sit up to 0.67 apart, 0.89 across the point
 TRIM_WIDTH = 0.58  # of the digit height; a wider piece can have the decimal point stuck to it
 MAX_WIDTH = 0.62  # of the digit height; no digit is wider once the point is trimmed off
+# A patch over part of a cell, or a cell edge cutting through a digit, leaves pixels off the
+# background color that no glyph explains. More than COVER_SHARE of the glyph band off by
+# COVER_LEVEL of the way to the text level, and farther than COVER_PAD from every blob, is no read.
+COVER_LEVEL = 0.15
+COVER_SHARE = 0.2
+COVER_PAD = 0.15  # of the digit height
+# A blob at the left or right edge, off the cell's top and bottom rows and level with the glyphs,
+# at least this tall and wide (of the digit height) is a digit the cell edge cut through. A
+# narrower one is the cell's border.
+CLIPPED_HEIGHT, CLIPPED_WIDTH = 0.8, 0.15
 
 CLASSES = "0123456789ICO"
 SUFFIX_LENGTH = {"club_path": 2, "face_to_path": 1, "face_to_target": 1}
@@ -350,7 +360,7 @@ def build_glyphs(samples: Iterable[tuple[np.ndarray, str]], per_class: int = 80)
     found: dict[str, list[Glyph]] = {c: [] for c in CLASSES}
     for cell, text in samples:
         chars = [c for c in text if c.isalnum()]
-        for cut in _cuts(cell):
+        for cut in _cuts(cell, covers=False):
             glyphs = [g for g in cut if isinstance(g, Glyph)]
             if BROKEN not in cut and len(glyphs) == len(chars):
                 for char, glyph in zip(chars, glyphs, strict=True):
@@ -493,12 +503,48 @@ def _edges(rgb: np.ndarray) -> np.ndarray:
     return cv2.GaussianBlur(edges, (0, 0), EDGE_BLUR)
 
 
-def _cuts(cell: np.ndarray) -> list[list[str | Glyph]]:
-    """The cell cut at each threshold. An empty cell has nothing to cut."""
+def _cuts(cell: np.ndarray, covers: bool = True) -> list[list[str | Glyph]]:
+    """The cell cut at each threshold. An empty cell has nothing to cut, and with `covers`
+    every cut of a covered cell is BROKEN."""
     if not cell.size:
         return [[] for _ in THRESHOLDS]
     dist = _distance(cell)
+    if covers and _covered(dist):
+        return [[BROKEN] for _ in THRESHOLDS]
     return [_cut(dist, threshold) for threshold in THRESHOLDS]
+
+
+def _covered(dist: np.ndarray) -> bool:
+    """Whether a digit is cut by the cell's left or right edge, or too much of the glyph band
+    is off the background and away from every blob.
+
+    The blobs are the ones `_blobs` keeps at the lowest threshold, and the band spans the
+    full-height ones. A cell with no full-height blob reads nothing anyway.
+    """
+    lo, hi = np.percentile(dist, PERCENTILES)
+    digit = DIGIT_HEIGHT * dist.shape[0]
+    mask = (dist > lo + THRESHOLDS[0] * (hi - lo)).astype(np.uint8)
+    count, labels, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+    kept = np.zeros(count, bool)
+    top, bottom = mask.shape[0], 0
+    for k in range(1, count):
+        x, y, w, h, area = (int(v) for v in stats[k])
+        if _is_blob(x, y, w, h, area, mask.shape):
+            kept[k] = True
+            if h >= SPLIT_HEIGHT * digit:
+                top, bottom = min(top, y), max(bottom, y + h)
+    if bottom <= top:
+        return False
+    height, width = mask.shape
+    for x, y, w, h, _ in stats[1:]:
+        at_edge = x <= EDGE_MARGIN or x + w >= width - EDGE_MARGIN
+        inside = 0 < y and y + h < height and y < bottom and y + h > top
+        if at_edge and inside and h >= CLIPPED_HEIGHT * digit and w >= CLIPPED_WIDTH * digit:
+            return True
+    reach = max(1, int(COVER_PAD * digit))
+    near = cv2.dilate(kept[labels].astype(np.uint8), np.ones((2 * reach + 1,) * 2, np.uint8))
+    off = dist[top:bottom] > lo + COVER_LEVEL * (hi - lo)
+    return float((off & (near[top:bottom] == 0)).mean()) > COVER_SHARE
 
 
 def _read(cut: list[str | Glyph], field: str, glyphs: Glyphs, digit: float) -> str | None:
@@ -636,12 +682,19 @@ def _trim_points(piece: Box, mask: np.ndarray, digit: float) -> list[Box]:
 
 def _blobs(mask: np.ndarray) -> list[Box]:
     """8-connected blobs as (x, y, w, h), left to right, without noise and the cell border."""
-    height, width = mask.shape
     _, _, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
     return sorted(
         (int(x), int(y), int(w), int(h))
         for x, y, w, h, area in stats[1:]
-        if area > MIN_AREA
+        if _is_blob(x, y, w, h, area, mask.shape)
+    )
+
+
+def _is_blob(x: int, y: int, w: int, h: int, area: int, shape: tuple[int, ...]) -> bool:
+    """Whether a component is big enough, low enough and clear of the left and right edges."""
+    height, width = shape[:2]
+    return (
+        area > MIN_AREA
         and y + h > MIN_BOTTOM * height
         and EDGE_MARGIN < x
         and x + w < width - EDGE_MARGIN
@@ -717,6 +770,9 @@ def _text(field: str, chars: str) -> str | None:
     digits = digits.replace("O", "0")
     suffix = suffix.replace("0", "O")
     decimals = DECIMALS.get(field, 1)
+    whole = digits[:-decimals] if decimals else digits
+    if len(whole) > 1 and whole[0] == "0":
+        return None  # a lost leading digit, as in "07.7" for 107.7
     if decimals and len(digits) > decimals:
         digits = f"{digits[:-decimals]}.{digits[-decimals:]}"
     if field == "club_path" and len(suffix) == 2:

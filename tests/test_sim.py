@@ -15,6 +15,7 @@ from golf_etl.sim import (
     SimShot,
     _read,
     _split,
+    _text,
     before_window,
     build_glyphs,
     counts_settled,
@@ -146,16 +147,88 @@ def test_dashes_read_as_nothing(glyphs):
     assert read_cell(cells["total_length"], "total_length", glyphs) is None
 
 
-def test_a_covered_cell_reads_nothing_and_the_rest_still_read(glyphs):
-    cells, labels = _cells("4761-s1")
-    left = FIELDS[0::2]
-    right = [f for f in FIELDS[1::2] if labels[f]]
-    for f in left:
-        median = np.median(cells[f].reshape(-1, 3), axis=0)
-        cells[f] = np.empty_like(cells[f])
-        cells[f][:] = median
-    assert [read_cell(cells[f], f, glyphs) for f in left] == [None] * len(left)
-    assert [read_cell(cells[f], f, glyphs) for f in right] == [labels[f] for f in right]
+def _patched(cell: np.ndarray, side: str, column: int, color, noise: float = 0) -> np.ndarray:
+    """The cell with a hard-edged patch of `color` from its `side` edge to `column`."""
+    h, w = cell.shape[:2]
+    patch = np.empty(cell.shape, np.float32)
+    patch[:] = color
+    if noise:
+        patch += np.random.default_rng(column).normal(0, noise, patch.shape)
+    alpha = np.zeros((h, w), np.float32)
+    if side == "right":
+        alpha[:, column:] = 1
+    else:
+        alpha[:, :column] = 1
+    alpha = cv2.GaussianBlur(alpha, (0, 0), 0.7)[..., None]
+    out = cell.astype(np.float32) * (1 - alpha) + patch * alpha
+    return np.clip(out, 0, 255).astype(np.uint8)
+
+
+SKIN, DENIM, DARK, BRICK, WHITE = (
+    (200, 160, 130),
+    (90, 110, 150),
+    (25, 25, 35),
+    (120, 60, 50),
+    (230,) * 3,
+)
+
+
+@pytest.mark.parametrize(
+    ("name", "field", "side", "column", "color"),
+    [
+        ("4761-s1", "carry_raw", "left", 13, BRICK),  # read 10.0 for 110.0
+        ("4761-s1", "back_spin", "left", 31, SKIN),  # read 5 for 3365
+        ("4762-s8", "carry_raw", "left", 15, DENIM),  # read 32.1 for 132.1
+        ("4762-s8", "carry_raw", "left", 28, DARK),  # read 2.1 for 132.1
+        ("4758-s1-white", "carry_raw", "right", 22, DENIM),  # read 1.9 for 196.2
+        ("4758-s2-tinted", "carry_raw", "right", 29, DARK),  # read 19.4 for 194.7
+        ("4758-s2-tinted", "carry_raw", "left", 15, BRICK),  # read 94.7 for 194.7
+    ],
+)
+def test_a_patch_over_part_of_a_number_reads_nothing(name, field, side, column, color, glyphs):
+    cells, _ = _cells(name)
+    assert read_cell(_patched(cells[field], side, column, color), field, glyphs) is None
+
+
+@pytest.mark.parametrize("name", PANEL_SIZES)
+def test_a_white_patch_over_part_of_a_cell_reads_no_wrong_number(name, glyphs):
+    cells, labels = _cells(name)
+    wrong = []
+    for f in (f for f in FIELDS if labels[f]):
+        for side in ("left", "right"):
+            for noise in (0, 25):
+                for column in range(2, cells[f].shape[1] - 1, 2):
+                    cell = _patched(cells[f], side, column, WHITE, noise)
+                    read = read_cell(cell, f, glyphs)
+                    if read not in (labels[f], None):
+                        wrong.append((f, side, noise, column, read))
+    assert wrong == []
+
+
+# The 4758 panel is the smallest. 7 or 8 px left, its cell edge cuts the 5 of 124.5 and leaves a
+# sliver too thin for the clipped digit rule, so "12.4" reads.
+CUT_TOO_THIN = pytest.mark.xfail(reason="a sliver of the cut digit is left", strict=True)
+
+
+@pytest.mark.parametrize("name", PANEL_SIZES)
+@pytest.mark.parametrize("shift", [-8, -7, -6, 6, 7, 8])
+def test_a_panel_box_off_by_six_to_eight_pixels_sideways_reads_no_wrong_number(
+    name, shift, glyphs, request
+):
+    if name == "4758-s1-white" and shift in (-8, -7):
+        request.applymarker(CUT_TOO_THIN)
+    # the cell's left or right edge cuts through the first or last digit
+    cells, labels = _cells(name, (shift, shift, 0, 0))
+    for f in FIELDS:
+        if labels[f]:
+            assert read_cell(cells[f], f, glyphs) in (labels[f], None), f
+
+
+def test_a_whole_number_never_starts_with_zero():
+    # "07.7" is 107.7 with its 1 cut off by the cell edge
+    assert _text("peak_height", "077") is None
+    assert _text("back_spin", "09") is None
+    assert _text("face_to_target", "03 O") == "0.3 O"
 
 
 def test_suffix_letters_and_digits_are_told_apart(glyphs):
