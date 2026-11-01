@@ -52,6 +52,7 @@ BROKEN = "?"  # a piece of a glyph the threshold broke apart; the read at that t
 CUT_SEARCH = 0.25  # digit widths around an even split searched for the darkest column
 GLYPH_SIZE = (12, 20)  # width, height
 ASPECT_WEIGHT = 0.5
+CLASS_MARGIN = 0.10  # score a glyph's class must beat every other class by, 0 and O as one
 
 CLASSES = "0123456789ICO"
 SUFFIX_LENGTH = {"club_path": 2, "face_to_path": 1, "face_to_target": 1}
@@ -72,6 +73,8 @@ Box = tuple[int, int, int, int]  # x0, x1, y0, y1
 class Glyph:
     image: np.ndarray  # 20 x 12 float32, mean removed, unit norm
     aspect: float  # width / height of the glyph's blob
+    left: int  # upscaled px from the cell's left edge
+    right: int
 
 
 @dataclass(frozen=True)
@@ -116,7 +119,7 @@ def cut_glyphs(cell: np.ndarray, threshold: float = THRESHOLDS[1]) -> list[str |
     "." or "-" for small marks, BROKEN for a piece of a glyph the threshold broke apart, else a
     Glyph.
     """
-    return _cut(_distance(cell), threshold)
+    return _cut(_distance(cell), threshold) if cell.size else []
 
 
 def build_glyphs(samples: Iterable[tuple[np.ndarray, str]], per_class: int = 80) -> Glyphs:
@@ -128,9 +131,7 @@ def build_glyphs(samples: Iterable[tuple[np.ndarray, str]], per_class: int = 80)
     found: dict[str, list[Glyph]] = {c: [] for c in CLASSES}
     for cell, text in samples:
         chars = [c for c in text if c.isalnum()]
-        dist = _distance(cell)
-        for threshold in THRESHOLDS:
-            cut = _cut(dist, threshold)
+        for cut in _cuts(cell):
             glyphs = [g for g in cut if isinstance(g, Glyph)]
             if BROKEN not in cut and len(glyphs) == len(chars):
                 for char, glyph in zip(chars, glyphs, strict=True):
@@ -145,19 +146,34 @@ def build_glyphs(samples: Iterable[tuple[np.ndarray, str]], per_class: int = 80)
 
 def read_cell(cell: np.ndarray, field: str, glyphs: Glyphs) -> str | None:
     """The cell's text as the screen shows it, or None when no clear read fits the field."""
-    dist = _distance(cell)
-    pattern = re.compile(FORMATS.get(field, r"\d+\.\d"))
-    reads = []
-    for threshold in THRESHOLDS:
-        cut = _cut(dist, threshold)
-        chars = "".join(_classify(g, glyphs) if isinstance(g, Glyph) else g for g in cut)
-        text = _text(field, chars.replace(".", "").replace("-", ""))
-        if pattern.fullmatch(text):
-            reads.append(text)
+    reads = [text for cut in _cuts(cell) if (text := _read(cut, field, glyphs))]
     top = Counter(reads).most_common(2)
     if not top or (len(top) == 2 and top[0][1] == top[1][1]):
         return None
     return top[0][0]
+
+
+def _cuts(cell: np.ndarray) -> list[list[str | Glyph]]:
+    """The cell cut at each threshold. An empty cell has nothing to cut."""
+    if not cell.size:
+        return [[] for _ in THRESHOLDS]
+    dist = _distance(cell)
+    return [_cut(dist, threshold) for threshold in THRESHOLDS]
+
+
+def _read(cut: list[str | Glyph], field: str, glyphs: Glyphs) -> str | None:
+    """One threshold's text, or None when a glyph is broken or the text does not fit the field.
+
+    The screen puts a space before a suffix, so the suffix starts after the widest gap.
+    """
+    found = [g for g in cut if isinstance(g, Glyph)]
+    if BROKEN in cut or not found:
+        return None
+    chars = [_classify(g, glyphs) for g in found]
+    if field in SUFFIX_LENGTH and len(found) > 1:
+        gaps = [b.left - a.right for a, b in pairwise(found)]
+        chars.insert(int(np.argmax(gaps)) + 1, " ")
+    return _text(field, "".join(chars))
 
 
 def _distance(cell: np.ndarray) -> np.ndarray:
@@ -174,14 +190,18 @@ def _cut(dist: np.ndarray, threshold: float) -> list[str | Glyph]:
     digit = DIGIT_HEIGHT * dist.shape[0]
     out: list[str | Glyph] = []
     for blob in _blobs(mask):
-        for x, y, w, h in _split(blob, dist * mask, digit):
+        pieces = _split(blob, dist * mask, digit)
+        if pieces is None:
+            out.append(BROKEN)
+            continue
+        for x, y, w, h in pieces:
             if h < MARK_HEIGHT * digit:
                 below_middle = y + h / 2 > dist.shape[0] / 2
                 out.append("." if below_middle and w < DOT_WIDTH * h else "-")
             elif h < SPLIT_HEIGHT * digit:
                 out.append(BROKEN)
             else:
-                out.append(_glyph(dist[y : y + h, x : x + w]))
+                out.append(_glyph(dist[y : y + h, x : x + w], x))
     return out
 
 
@@ -199,8 +219,11 @@ def _blobs(mask: np.ndarray) -> list[Box]:
     )
 
 
-def _split(blob: Box, ink: np.ndarray, digit: float) -> list[Box]:
-    """Cut a blob of touching digits at the faintest column near each even split."""
+def _split(blob: Box, ink: np.ndarray, digit: float) -> list[Box] | None:
+    """Cut a blob of touching digits at the faintest column near each even split.
+
+    None when the blob is too narrow to cut into as many digits as its width asks for.
+    """
     x, y, w, h = blob
     pitch = DIGIT_WIDTH * digit
     count = round(w / pitch) if h >= SPLIT_HEIGHT * digit else 1
@@ -213,15 +236,17 @@ def _split(blob: Box, ink: np.ndarray, digit: float) -> list[Box]:
         even = w * j // count
         start = max(cuts[-1] + 1, even - reach)
         stop = min(w - 1, even + reach)
-        cuts.append(start + int(np.argmin(columns[start:stop])) if start < stop else even)
+        if start >= stop:
+            return None
+        cuts.append(start + int(np.argmin(columns[start:stop])))
     cuts.append(w)
-    return [(x + a, y, b - a, h) for a, b in pairwise(cuts) if b > a]
+    return [(x + a, y, b - a, h) for a, b in pairwise(cuts)]
 
 
-def _glyph(crop: np.ndarray) -> Glyph:
+def _glyph(crop: np.ndarray, left: int) -> Glyph:
     h, w = crop.shape
     image = cv2.resize(crop, GLYPH_SIZE, interpolation=cv2.INTER_AREA)
-    return Glyph(_normalize(image), w / h)
+    return Glyph(_normalize(image), w / h, left, left + w)
 
 
 def _normalize(values: np.ndarray) -> np.ndarray:
@@ -241,19 +266,31 @@ def _spread(items: list[Glyph], limit: int) -> list[Glyph]:
 
 
 def _classify(glyph: Glyph, glyphs: Glyphs) -> str:
+    """The best template's class, or BROKEN when another class scores within CLASS_MARGIN."""
     scores = glyphs.features @ glyph.image.ravel()
     scores -= ASPECT_WEIGHT * np.abs(glyphs.aspects - glyph.aspect)
-    return str(glyphs.labels[int(np.argmax(scores))])
+    best = int(np.argmax(scores))
+    groups = np.where(glyphs.labels == "O", "0", glyphs.labels)
+    rivals = scores[groups != groups[best]]
+    if rivals.size and scores[best] - rivals.max() < CLASS_MARGIN:
+        return BROKEN
+    return str(glyphs.labels[best])
 
 
-def _text(field: str, chars: str) -> str:
-    """Screen text from the glyph classes: suffix letters, digits, and the decimal point."""
-    n = SUFFIX_LENGTH.get(field, 0)
-    digits = chars[: len(chars) - n].replace("O", "0")
-    suffix = chars[len(chars) - n :].replace("0", "O")
+def _text(field: str, chars: str) -> str | None:
+    """Screen text from glyph classes, or None when it does not fit the field.
+
+    For a field with a suffix, `chars` has a space where the suffix starts.
+    """
+    digits, _, suffix = chars.partition(" ")
+    if len(suffix) != SUFFIX_LENGTH.get(field, 0):
+        return None
+    digits = digits.replace("O", "0")
+    suffix = suffix.replace("0", "O")
     decimals = DECIMALS.get(field, 1)
     if decimals and len(digits) > decimals:
         digits = f"{digits[:-decimals]}.{digits[-decimals:]}"
     if field == "club_path" and len(suffix) == 2:
         suffix = f"{suffix[0]}-{suffix[1]}"
-    return f"{digits} {suffix}" if n else digits
+    text = f"{digits} {suffix}" if suffix else digits
+    return text if re.fullmatch(FORMATS.get(field, r"\d+\.\d"), text) else None

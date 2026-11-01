@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from golf_etl.sim import FIELDS, Glyphs, build_glyphs, read_cell, value_boxes
+from golf_etl.sim import FIELDS, Glyphs, _split, _text, build_glyphs, read_cell, value_boxes
 from tests.sim_fixtures import load
 
 MARGIN = 40  # px around the panel in every fixture
@@ -15,11 +15,25 @@ PANEL_SIZES = {  # (width, height) of the panel in the source video
 READS_BLANK = {("4758-s2-tinted", "club_path")}
 
 
-def _cells(name: str) -> tuple[dict[str, np.ndarray], dict[str, str | None]]:
+# (x0, x1, y0, y1) px added to the panel box: moved 2px each way, then grown and shrunk 2px
+BOX_ERRORS = [
+    (2, 2, 0, 0),
+    (-2, -2, 0, 0),
+    (0, 0, 2, 2),
+    (0, 0, -2, -2),
+    (-2, 2, -2, 2),
+    (2, -2, 2, -2),
+]
+
+
+def _cells(
+    name: str, box_error: tuple[int, int, int, int] = (0, 0, 0, 0)
+) -> tuple[dict[str, np.ndarray], dict[str, str | None]]:
     """The value cell of every field, by field name, and the fixture's labels."""
     rgb, labels = load(name)
     w, h = PANEL_SIZES[name]
-    boxes = value_boxes((MARGIN, MARGIN + w, MARGIN, MARGIN + h))
+    panel = (MARGIN, MARGIN + w, MARGIN, MARGIN + h)
+    boxes = value_boxes(tuple(a + b for a, b in zip(panel, box_error, strict=True)))
     cells = {f: rgb[y0:y1, x0:x1] for f, (x0, x1, y0, y1) in zip(FIELDS, boxes, strict=True)}
     return cells, labels
 
@@ -39,6 +53,30 @@ def test_reads_every_labeled_cell_of_each_fixture(name, glyphs):
     labeled = [f for f in FIELDS if labels[f]]
     reads = {f: read_cell(cells[f], f, glyphs) for f in labeled}
     assert reads == {f: None if (name, f) in READS_BLANK else labels[f] for f in labeled}
+
+
+@pytest.mark.parametrize("name", PANEL_SIZES)
+def test_a_panel_box_off_by_two_pixels_reads_no_wrong_number(name, glyphs):
+    for box_error in BOX_ERRORS:
+        cells, labels = _cells(name, box_error)
+        for f in FIELDS:
+            if labels[f]:
+                assert read_cell(cells[f], f, glyphs) in (labels[f], None), (box_error, f)
+
+
+def test_a_lost_suffix_glyph_reads_nothing():
+    assert _text("club_path", "10 IO") == "1.0 I-O"
+    assert _text("club_path", "100I") is None
+    assert _text("face_to_path", "140") is None
+
+
+def test_a_blob_too_narrow_for_its_digit_count_is_not_cut():
+    # 5px wide at a 1px digit step asks for 5 digits, and the last cut has no room
+    assert _split((0, 0, 5, 2), np.ones((2, 5)), digit=2.0) is None
+
+
+def test_an_empty_cell_reads_nothing(glyphs):
+    assert read_cell(np.zeros((0, 0, 3), np.uint8), "smash", glyphs) is None
 
 
 def test_dashes_read_as_nothing(glyphs):
