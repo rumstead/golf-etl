@@ -51,8 +51,8 @@ ROW_LOW_BOX = (51, 158, 48, 259)
 NO_LABELS_BOX = (31, 138, 23, 234)
 READS_BLANK = {
     ("4758-s2-tinted", "club_path"),  # the dim 4 breaks apart in this single tinted frame
-    ("4758-s1-white", "club_speed"),  # a stray dot between the 9 and the 1 is not a decimal point
-    ("4758-s2-tinted", "ball_speed"),  # the 2 and the 5 match no class clearly at any threshold
+    ("4758-s1-white", "club_speed"),  # a clip artifact at the cell's bottom edge
+    ("4758-s2-tinted", "ball_speed"),  # the cut trims ".4" to ". ? .", so no cut makes templates
     ("4758-s2-tinted", "total_spin"),  # a dot after the last digit, and spin has no decimals
 }
 
@@ -317,7 +317,7 @@ def test_reads_through_the_found_box_give_no_wrong_number(name, glyphs):
 
 
 # IMG_4758 frames cut to the found panel box plus 12 px: 4758-fragments at 48.5 s,
-# 4758-merged-point at 45.5 s and 4758-vanished-digit at 46.0 s
+# 4758-merged-point at 45.5 s, 4758-vanished-digit at 46.0 s and 4758-stray-mark at 52.0 s
 REAL_BOX = (12, 120, 12, 223)
 
 
@@ -339,6 +339,12 @@ def test_a_decimal_point_stuck_to_a_digit_is_cut_off(field, glyphs):
     # the point touches the 6 of 196.2 and the 5 of 124.5
     cell, label = _real_cell("4758-merged-point", field)
     assert read_cell(cell, field, glyphs) == label
+
+
+def test_a_stray_mark_does_not_outvote_the_number(glyphs):
+    # a cut with a "." where no decimal point goes reads 196.4; only the mark rule throws it out
+    cell, label = _real_cell("4758-stray-mark", "carry_raw")
+    assert read_cell(cell, "carry_raw", glyphs) == label
 
 
 def test_a_vanished_digit_reads_nothing(glyphs):

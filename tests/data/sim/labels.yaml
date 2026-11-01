@@ -143,3 +143,16 @@ wall.png:
   club_speed: "91.0"
 4758-lone-read.png:
   total_spin: "1849"
+4758-stray-mark.png:
+  club_path: "4.3 I-O"
+  carry_game: null
+  face_to_path: "1.2 O"
+  carry_raw: "196.2"
+  back_spin: "3142"
+  total_length: null
+  smash: "1.37"
+  ball_speed: "124.5"
+  peak_height: "107.7"
+  total_spin: "3142"
+  face_to_target: "5.5 O"
+  club_speed: "91.0"
