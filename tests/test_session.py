@@ -157,7 +157,18 @@ def test_sim_table_lists_every_swing_with_blanks_for_unread_fields(tmp_path):
 
 def test_session_md_without_a_screen_has_no_sim_table(tmp_path):
     write_session_md(tmp_path / "session.md", summary(swings=[Swing(12.4, 1.0, 16.0, None)]))
-    assert "## Sim" not in (tmp_path / "session.md").read_text()
+    text = (tmp_path / "session.md").read_text()
+    assert "## Sim" not in text and "sim.json" not in text
+
+
+def test_the_reading_guide_names_sim_json_when_the_screen_is_read(tmp_path):
+    shot = SimShot(dict.fromkeys(FIELDS), dict.fromkeys(FIELDS, 0), 20, {})
+    swings = [Swing(12.4, 1.0, 16.0, swing_track(12.4))]
+    write_session_md(tmp_path / "session.md", summary(swings=swings, sims=[shot]))
+    guide = (tmp_path / "session.md").read_text().split("## Sim")[0]
+    assert "`sim.json`" in guide
+    after_shot = next(line for line in guide.splitlines() if "`07-after-shot.jpg`" in line)
+    assert "blank" in after_shot
 
 
 def test_session_md_with_no_swings_says_so(tmp_path):

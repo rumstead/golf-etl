@@ -34,6 +34,14 @@ or launch monitor its screen shows this shot's numbers (club path, face, speeds,
 Numbers visible in any other frame belong to the previous shot.
 """
 
+_AFTER_SHOT_SIM = """\
+- `07-after-shot.jpg` is a full-resolution frame a few seconds after impact. Its simulator screen \
+shows this shot's numbers, which the Sim table below already has as text: look here for the \
+cells the table leaves blank. Numbers visible in any other frame belong to the previous shot.
+- `sim.json` in each swing folder is that swing's Sim table row with each number's vote count \
+and when it first showed, and `"unchanged": true` when the screen did not change after the swing.
+"""
+
 _DRIVE_CLIP = "- `clip.mp4` is the swing as video.\n"
 
 _POSE = """\
@@ -51,19 +59,21 @@ top is not known and the durations are left blank.
 """
 
 
-def guide(storage: str) -> str:
-    """The reading guide for what the publisher leaves in the session folder."""
+def guide(storage: str, sim: bool = False) -> str:
+    """The reading guide for what the publisher leaves in the session folder; `sim` when the
+    swings have a Sim table row and `sim.json`."""
+    after_shot = _AFTER_SHOT_SIM if sim else _AFTER_SHOT
     if storage == "drive":
         return (
             _GUIDE_INTRO
             + _DRIVE_COPIES
-            + _AFTER_SHOT
+            + after_shot
             + _DRIVE_CLIP
             + _POSE.format(frame="the nearest `clip.mp4` frame", numbers="`clip.mp4` frame numbers")
         )
     return (
         _GUIDE_INTRO
-        + _AFTER_SHOT
+        + after_shot
         + _POSE.format(
             frame="the frame number in the swing",
             numbers="frame numbers counted from 2.5s before impact",
@@ -152,7 +162,8 @@ def write_session_md(path: Path, s: SessionSummary) -> None:
         "",
     ]
     if s.swings and s.balls:
-        lines += [guide(s.storage) + BALL_GUIDE, summary_line(s.balls, s.ball_median), ""]
+        guide_text = guide(s.storage, bool(s.sims))
+        lines += [guide_text + BALL_GUIDE, summary_line(s.balls, s.ball_median), ""]
         lines += [
             "| Swing | Impact | Strength | Hand speed peak "
             "| Ball px/frame | Start dir | Grade | Track |",
@@ -171,7 +182,7 @@ def write_session_md(path: Path, s: SessionSummary) -> None:
             ]
             lines.append("|" + "|".join(f" {c} " if c else " " for c in cells) + "|")
     elif s.swings:
-        lines += [guide(s.storage)]
+        lines += [guide(s.storage, bool(s.sims))]
         lines += ["| Swing | Impact | Strength | Hand speed peak |", "|---|---|---|---|"]
         for n, swing in enumerate(s.swings, 1):
             lines.append(
