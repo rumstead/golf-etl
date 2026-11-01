@@ -1,3 +1,5 @@
+import json
+
 import cv2
 import numpy as np
 import pytest
@@ -9,13 +11,20 @@ from golf_etl.sim import (
     UPSCALE,
     Glyph,
     Glyphs,
+    Panel,
+    SimShot,
     _read,
     _split,
     build_glyphs,
     cut_glyphs,
     find_panel,
+    pick_panel,
     read_cell,
+    read_shot,
+    shot_window,
     value_boxes,
+    vote,
+    write_sim_json,
 )
 from tests.sim_fixtures import load
 
@@ -267,3 +276,105 @@ def test_a_weak_read_from_one_threshold_reads_nothing(glyphs):
     # IMG_4758 at 138.5 s, the total_spin cell: only the 0.8 cut reads, and its broken 8 reads 9
     cell, _ = load("4758-lone-read")
     assert read_cell(cell, "total_spin", glyphs) is None
+
+
+def test_vote_ignores_a_stale_value_outnumbered_by_the_new_one():
+    assert vote(["2.0 C", "2.0 C", "5.5 C", "5.5 C", "5.5 C", "5.5 C", "5.5 C"]) == ("5.5 C", 5)
+
+
+def test_vote_leaves_a_close_split_blank():
+    assert vote(["110.0", "110.0", "118.0", "118.0", "118.0"]) == (None, 0)
+
+
+def test_one_frame_is_not_enough_to_vote():
+    assert vote(["1.43", None]) == (None, 0)
+
+
+def test_shot_window_ends_at_the_next_swings_clip():
+    assert shot_window(100.0, 600.0, 106.0, 2.5) == (102.0, 103.5)
+    assert shot_window(100.0, 600.0, None, 2.5) == (102.0, 115.0)
+    assert shot_window(100.0, 104.0, None, 2.5) == (102.0, 104.0)
+
+
+def _shot_frames(times=(2.0, 2.5, 3.0)):
+    rgb, labels = load("4761-s1")
+    return [(t, rgb) for t in times], labels
+
+
+def test_read_shot_reads_every_labeled_field_from_repeated_frames(glyphs):
+    frames, labels = _shot_frames()
+    shot = read_shot(frames, Panel(PANEL_BOXES["4761-s1"], 0.5), glyphs)
+    assert shot.frames == 3
+    want = {f: None if ("4761-s1", f) in READS_BLANK else labels[f] for f in FIELDS}
+    assert shot.values == want
+    for f in FIELDS:
+        assert shot.votes[f] == (3 if want[f] else 0)
+        assert shot.first_seen_s.get(f) == (2.0 if want[f] else None)
+
+
+def test_sim_json_has_every_field(tmp_path, glyphs):
+    frames, labels = _shot_frames()
+    panel = Panel(PANEL_BOXES["4761-s1"], 0.5)
+    shot = read_shot(frames, panel, glyphs)
+    write_sim_json(tmp_path / "sim.json", shot, panel)
+    data = json.loads((tmp_path / "sim.json").read_text())
+    assert data["panel"] == list(panel.box)
+    assert data["frames"] == 3
+    assert list(data["fields"]) == list(FIELDS)
+    for f in FIELDS:
+        entry = data["fields"][f]
+        assert entry["text"] == shot.values[f]
+        if entry["text"] is None:
+            assert entry["value"] is None
+            assert entry["seen_s"] is None
+        else:
+            assert entry["value"] == float(entry["text"].split()[0])
+            assert entry["seen_s"] == 2.0
+        assert entry["votes"] == shot.votes[f]
+
+
+def test_sim_json_value_is_the_leading_number(tmp_path):
+    shot = SimShot(
+        values={"club_path": "4.0 I-O", "back_spin": "3837"},
+        votes={"club_path": 3, "back_spin": 2},
+        frames=3,
+        first_seen_s={"club_path": 2.5, "back_spin": 2.0},
+    )
+    write_sim_json(tmp_path / "sim.json", shot, Panel((1, 2, 3, 4), 0.5))
+    fields = json.loads((tmp_path / "sim.json").read_text())["fields"]
+    assert fields["club_path"] == {"text": "4.0 I-O", "value": 4.0, "votes": 3, "seen_s": 2.5}
+    assert fields["back_spin"]["value"] == 3837.0
+
+
+TRUE_BOX = (40, 166, 40, 283)
+
+
+def _panel(box, score=0.5):
+    return Panel(box, score)
+
+
+def test_pick_panel_takes_the_box_most_frames_agree_on():
+    true = [
+        _panel((40 + dx, 166 + dx, 40 + dy, 283 + dy), 0.4)
+        for dx, dy in [(0, 0), (1, 0), (0, 1), (1, 1), (0, 0)]
+    ]
+    low = [_panel((40, 166, 75, 318), 0.9)] * 2
+    assert pick_panel(low + true) in true
+
+
+def test_pick_panel_needs_three_agreeing_frames():
+    assert pick_panel([_panel(TRUE_BOX), _panel(TRUE_BOX), None, None, None]) is None
+
+
+def test_pick_panel_needs_a_majority():
+    other = (400, 526, 300, 543)
+    assert pick_panel([_panel(TRUE_BOX)] * 3 + [_panel(other)] * 3) is None
+
+
+def test_pick_panel_keeps_a_drifting_panel():
+    panels = [_panel((40, 166, y, y + 243)) for y in (199, 200, 201)]
+    assert pick_panel(panels) is panels[1]
+
+
+def test_pick_panel_with_no_panel_is_none():
+    assert pick_panel([None, None]) is None

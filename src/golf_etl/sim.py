@@ -8,6 +8,7 @@ decimals. The panel itself is found by matching the edges of a reference panel o
 sizes.
 """
 
+import json
 import re
 from collections import Counter
 from collections.abc import Iterable
@@ -86,6 +87,14 @@ LABEL_BAND = (0.6, 0.86)  # of a panel row, where the labels sit under the value
 SETTLE_REACH = 0.33  # of a panel row, how far the box may move up or down as it settles
 MIN_PANEL_SCORE = 0.29  # halfway between the weakest panel (0.335) and best no-panel frame (0.246)
 
+SAMPLE_FPS = 2.0  # frames read per second of video
+START_AFTER_S = 2.0  # the readout appears this long after impact
+MAX_AFTER_S = 15.0  # and is read for no longer than this
+MIN_VOTES = 2  # reads a field's winner needs
+LEAD = 2  # the winner needs this many times the runner-up's votes
+PANEL_AGREE_PX = 2  # panels this close on every edge are the same panel
+MIN_PANELS = 3  # agreeing panels needed to trust a box
+
 Box = tuple[int, int, int, int]  # x0, x1, y0, y1
 
 
@@ -93,6 +102,14 @@ Box = tuple[int, int, int, int]  # x0, x1, y0, y1
 class Panel:
     box: Box
     score: float  # TM_CCOEFF_NORMED of the frame's edges against the reference, before settling
+
+
+@dataclass
+class SimShot:
+    values: dict[str, str | None]  # screen text by field, None when the frames do not agree
+    votes: dict[str, int]  # reads of the winning text, 0 for a blank field
+    frames: int
+    first_seen_s: dict[str, float]  # when each winning text first appeared; no entry for a blank
 
 
 @dataclass(frozen=True)
@@ -143,6 +160,91 @@ def find_panel(frame: np.ndarray) -> Panel | None:
     """The readout panel in an RGB frame (0 to 255), or None when nothing matches well enough."""
     panel = _best_panel(frame)
     return panel if panel and panel.score >= MIN_PANEL_SCORE else None
+
+
+def pick_panel(panels: list[Panel | None]) -> Panel | None:
+    """The panel most frames agree on, or None when no box has a clear majority.
+
+    Panels agree when every edge is within PANEL_AGREE_PX. Each found panel counts its neighbors,
+    so a panel that drifts a pixel or two over a video stays in one group. The most neighbors
+    win, then the higher score, then the box closest to its neighbors. The group needs at least
+    MIN_PANELS panels and more than half of the found panels.
+    """
+    found = [p for p in panels if p is not None]
+
+    def near(a: Panel, b: Panel) -> bool:
+        return all(abs(x - y) <= PANEL_AGREE_PX for x, y in zip(a.box, b.box, strict=True))
+
+    def spread(a: Panel) -> int:
+        return sum(
+            abs(x - y) for b in found if near(a, b) for x, y in zip(a.box, b.box, strict=True)
+        )
+
+    groups = {id(p): sum(near(p, q) for q in found) for p in found}  # each panel counts itself
+    if not found:
+        return None
+    best = max(found, key=lambda p: (groups[id(p)], p.score, -spread(p)))
+    size = groups[id(best)]
+    return best if size >= MIN_PANELS and size * 2 > len(found) else None
+
+
+def shot_window(
+    impact_s: float, duration_s: float, next_impact_s: float | None, pre_impact_s: float
+) -> tuple[float, float]:
+    """The span of video to read: from START_AFTER_S after impact to the earliest of MAX_AFTER_S
+    after impact, the next swing's clip start, and the end of the video."""
+    ends = [impact_s + MAX_AFTER_S, duration_s]
+    if next_impact_s is not None:
+        ends.append(next_impact_s - pre_impact_s)
+    return impact_s + START_AFTER_S, min(ends)
+
+
+def vote(reads: list[str | None]) -> tuple[str | None, int]:
+    """The winning read and its count, or (None, 0) when no read clearly wins.
+
+    A winner needs MIN_VOTES votes and LEAD times the runner-up's, so a value the screen has
+    moved on from does not outvote the new one, and a close split stays blank.
+    """
+    top = Counter(r for r in reads if r is not None).most_common(2)
+    if not top:
+        return None, 0
+    text, votes = top[0]
+    runner_up = top[1][1] if len(top) == 2 else 0
+    if votes < MIN_VOTES or votes < LEAD * runner_up:
+        return None, 0
+    return text, votes
+
+
+def read_shot(frames: Iterable[tuple[float, np.ndarray]], panel: Panel, glyphs: Glyphs) -> SimShot:
+    """Every field read in each (time, RGB frame) and voted across the frames."""
+    boxes = value_boxes(panel.box)
+    reads: dict[str, list[tuple[float, str | None]]] = {f: [] for f in FIELDS}
+    count = 0
+    for t, frame in frames:
+        count += 1
+        for field, (x0, x1, y0, y1) in zip(FIELDS, boxes, strict=True):
+            reads[field].append((t, read_cell(frame[y0:y1, x0:x1], field, glyphs)))
+    values, votes, first_seen = {}, {}, {}
+    for field, found in reads.items():
+        values[field], votes[field] = vote([text for _, text in found])
+        if values[field] is not None:
+            first_seen[field] = next(t for t, text in found if text == values[field])
+    return SimShot(values, votes, count, first_seen)
+
+
+def write_sim_json(path: Path, shot: SimShot, panel: Panel) -> None:
+    """Write the shot's fields, their votes and the panel box as JSON."""
+    fields = {}
+    for field in FIELDS:
+        text = shot.values.get(field)
+        fields[field] = {
+            "text": text,
+            "value": float(text.split()[0]) if text else None,
+            "votes": shot.votes.get(field, 0),
+            "seen_s": shot.first_seen_s.get(field) if text else None,
+        }
+    data = {"panel": list(panel.box), "frames": shot.frames, "fields": fields}
+    path.write_text(json.dumps(data, indent=2) + "\n")
 
 
 def cut_glyphs(cell: np.ndarray, threshold: float = THRESHOLDS[1]) -> list[str | Glyph]:
