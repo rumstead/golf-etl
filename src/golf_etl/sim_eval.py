@@ -30,7 +30,7 @@ from golf_etl.sim import (
     value_boxes,
 )
 
-LABEL_START_S = 3.0  # after impact; at 2 to 3 s the panel can still show the shot before
+LABEL_START_S = 3.0  # after impact; the screen switches to the shot 0.25 to 0.5s after it
 
 
 @dataclass(frozen=True)
