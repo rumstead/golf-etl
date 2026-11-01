@@ -4,14 +4,15 @@ The panel is a 2 x 6 grid of numbers on a flat background. Slo-mo footage catche
 color cycle, so the text can be white, yellow or blue: each value cell is read as its distance
 from the cell's own median color, cut into glyphs, and every glyph is matched to labeled
 templates. Small text often loses its decimal point, so the point is put back from the field's
-decimals.
+decimals. The panel itself is found by matching the edges of a reference panel over a range of
+sizes.
 """
 
 import re
 from collections import Counter
 from collections.abc import Iterable
 from dataclasses import dataclass
-from functools import cached_property
+from functools import cache, cached_property
 from itertools import pairwise
 from pathlib import Path
 
@@ -67,7 +68,22 @@ FORMATS = {
     "total_spin": r"\d+",
 }  # every other field is r"\d+\.\d"
 
+PANEL_REFERENCE = Path(__file__).with_name("sim_panel.png")  # edges of a 126 x 243 panel
+CANNY = (50, 150)
+EDGE_BLUR = 1.0  # px sigma, so edges a px apart still match
+COARSE_SIZE = 0.5  # frame scale for the coarse pass
+COARSE_SCALES = np.round(np.arange(0.6, 1.41, 0.05), 2)  # of the reference size
+FINE_SCALES = np.round(np.arange(-0.05, 0.051, 0.01), 2)  # around the best coarse scale
+ROI_MARGIN = 0.15  # of the coarse box height, searched around it at full size
+MIN_PANEL_SCORE = 0.29  # halfway between the weakest panel (0.335) and best no-panel frame (0.246)
+
 Box = tuple[int, int, int, int]  # x0, x1, y0, y1
+
+
+@dataclass(frozen=True)
+class Panel:
+    box: Box
+    score: float  # TM_CCOEFF_NORMED of the frame's edges against the reference
 
 
 @dataclass(frozen=True)
@@ -114,6 +130,12 @@ def value_boxes(panel_box: Box) -> list[Box]:
     return boxes
 
 
+def find_panel(frame: np.ndarray) -> Panel | None:
+    """The readout panel in an RGB frame, or None when nothing matches the reference well enough."""
+    panel = _best_panel(frame)
+    return panel if panel and panel.score >= MIN_PANEL_SCORE else None
+
+
 def cut_glyphs(cell: np.ndarray, threshold: float = THRESHOLDS[1]) -> list[str | Glyph]:
     """The cell's glyphs left to right.
 
@@ -153,6 +175,56 @@ def read_cell(cell: np.ndarray, field: str, glyphs: Glyphs) -> str | None:
     if not top or (len(top) == 2 and top[0][1] == top[1][1]):
         return None
     return top[0][0]
+
+
+def _best_panel(frame: np.ndarray) -> Panel | None:
+    """The best match of the reference, whatever its score.
+
+    The reference is matched over COARSE_SCALES on a COARSE_SIZE frame, then over FINE_SCALES at
+    full size near the hit.
+    """
+    edges = _edges(frame)
+    small = cv2.resize(edges, None, fx=COARSE_SIZE, fy=COARSE_SIZE, interpolation=cv2.INTER_AREA)
+    coarse = {s: hit for s in COARSE_SCALES if (hit := _match(small, s * COARSE_SIZE))}
+    if not coarse:
+        return None
+    scale = max(coarse, key=lambda s: coarse[s][0])
+    x0, x1, y0, y1 = (round(v / COARSE_SIZE) for v in coarse[scale][1])
+    margin = round(ROI_MARGIN * (y1 - y0)) + 2
+    left, top = max(0, x0 - margin), max(0, y0 - margin)
+    roi = edges[top : y1 + margin, left : x1 + margin]
+    fine = [hit for s in scale + FINE_SCALES if (hit := _match(roi, s))]
+    if not fine:
+        return None
+    score, (bx0, bx1, by0, by1) = max(fine, key=lambda h: h[0])
+    return Panel((bx0 + left, bx1 + left, by0 + top, by1 + top), score)
+
+
+def _match(edges: np.ndarray, scale: float) -> tuple[float, Box] | None:
+    """Best score and box of the reference at `scale`, or None when it does not fit in `edges`."""
+    reference = _reference()
+    w, h = round(reference.shape[1] * scale), round(reference.shape[0] * scale)
+    if w > edges.shape[1] or h > edges.shape[0]:
+        return None
+    template = cv2.resize(reference, (w, h), interpolation=cv2.INTER_AREA)
+    scores = cv2.matchTemplate(edges, template, cv2.TM_CCOEFF_NORMED)
+    _, score, _, (x, y) = cv2.minMaxLoc(scores)
+    return float(score), (x, x + w, y, y + h)
+
+
+@cache
+def _reference() -> np.ndarray:
+    edges = cv2.imread(str(PANEL_REFERENCE), cv2.IMREAD_GRAYSCALE)
+    return cv2.GaussianBlur(edges, (0, 0), EDGE_BLUR)
+
+
+def _edges(rgb: np.ndarray) -> np.ndarray:
+    """Blurred Canny edges, strongest over the color channels.
+
+    They stay uint8: in a blurred float map, near flat areas give spurious scores close to 1.
+    """
+    edges = cv2.Canny(np.ascontiguousarray(rgb), *CANNY)
+    return cv2.GaussianBlur(edges, (0, 0), EDGE_BLUR)
 
 
 def _cuts(cell: np.ndarray) -> list[list[str | Glyph]]:

@@ -1,3 +1,4 @@
+import cv2
 import numpy as np
 import pytest
 
@@ -12,6 +13,7 @@ from golf_etl.sim import (
     _split,
     build_glyphs,
     cut_glyphs,
+    find_panel,
     read_cell,
     value_boxes,
 )
@@ -23,6 +25,14 @@ PANEL_SIZES = {  # (width, height) of the panel in the source video
     "4762-s8": (126, 243),
     "4758-s1-white": (104, 204),
     "4758-s2-tinted": (104, 204),
+}
+# (x0, x1, y0, y1) where the cell grid of the reference panel lines up with the fixture's cells.
+# The 4762 panel sits 2 to 3 px up and right of the MARGIN box, and the 4758 panel is 107 x 211.
+PANEL_BOXES = {
+    "4761-s1": (40, 166, 40, 283),
+    "4762-s8": (42, 168, 38, 281),
+    "4758-s1-white": (42, 149, 41, 252),
+    "4758-s2-tinted": (42, 149, 41, 252),
 }
 # The dim 4 breaks apart in this single tinted frame, so the cell reads blank.
 READS_BLANK = {("4758-s2-tinted", "club_path")}
@@ -145,3 +155,41 @@ def test_glyphs_round_trip_through_npz(tmp_path, glyphs):
     np.testing.assert_array_equal(back.labels, glyphs.labels)
     cells, labels = _cells("4762-s8")
     assert read_cell(cells["smash"], "smash", back) == labels["smash"]
+
+
+@pytest.mark.parametrize("name", PANEL_SIZES)
+def test_finds_the_panel_in_each_fixture(name):
+    panel = find_panel(load(name)[0])
+    assert panel is not None
+    errors = [a - b for a, b in zip(panel.box, PANEL_BOXES[name], strict=True)]
+    assert all(abs(e) <= 2 for e in errors), (panel.box, errors)
+
+
+def test_finds_a_scaled_panel_pasted_into_a_blank_frame():
+    rgb, _ = load("4761-s1")
+    w, h = PANEL_SIZES["4761-s1"]
+    crop = rgb[MARGIN : MARGIN + h, MARGIN : MARGIN + w]
+    small = cv2.resize(crop, (round(w * 0.8), round(h * 0.8)), interpolation=cv2.INTER_AREA)
+    frame = np.empty((1080, 1920, 3), np.uint8)
+    frame[:] = (60, 90, 60)
+    frame[300 : 300 + small.shape[0], 1500 : 1500 + small.shape[1]] = small
+    panel = find_panel(frame)
+    assert panel is not None
+    want = (1500, 1500 + small.shape[1], 300, 300 + small.shape[0])
+    errors = [a - b for a, b in zip(panel.box, want, strict=True)]
+    assert all(abs(e) <= 2 for e in errors), (panel.box, want)
+
+
+def test_no_panel_in_a_frame_without_a_screen():
+    assert find_panel(load("range")[0]) is None
+
+
+@pytest.mark.parametrize("name", PANEL_SIZES)
+def test_reads_through_the_found_box_give_no_wrong_number(name, glyphs):
+    rgb, labels = load(name)
+    panel = find_panel(rgb)
+    assert panel is not None
+    boxes = value_boxes(panel.box)
+    for f, (x0, x1, y0, y1) in zip(FIELDS, boxes, strict=True):
+        if labels[f]:
+            assert read_cell(rgb[y0:y1, x0:x1], f, glyphs) in (labels[f], None), f
