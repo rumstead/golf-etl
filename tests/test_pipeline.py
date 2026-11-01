@@ -305,18 +305,22 @@ def test_a_swing_with_the_same_numbers_on_screen_before_impact_reads_blank(tmp_p
     assert "| swing-01 | | | | | | | | | | | | |" in text.split("## Sim")[1]
 
 
-def test_a_swing_whose_panel_moved_a_row_reads_blank(tmp_path, caplog):
-    # the session box comes from swings 1 and 3; for swing 2 the camera put the panel a row lower
-    row = 40
+def _moved_video(path, down: int):
+    """Swings at 1, 9 and 17s; around swing 2 the camera put the panel `down` px lower."""
     stills = [
         (_screen_still("4762-s8"), 1.0),
         (_screen_still("4761-s1"), 6.0),
-        (_screen_still("4762-s8", row), 2.0),
-        (_screen_still("4761-s1", row), 6.0),
+        (_screen_still("4762-s8", down), 2.0),
+        (_screen_still("4761-s1", down), 6.0),
         (_screen_still("4762-s8"), 2.0),
         (_screen_still("4761-s1"), 15.0),
     ]
-    video = _still_video(tmp_path / "moved.mp4", stills)
+    return _still_video(path, stills)
+
+
+def test_a_swing_whose_panel_moved_a_row_reads_blank(tmp_path, caplog):
+    # the session box comes from swings 1 and 3
+    video = _moved_video(tmp_path / "moved.mp4", 40)
     with caplog.at_level(logging.INFO, logger="golf_etl.pipeline"):
         result = _process(video, tmp_path / "out", [1.0, 9.0, 17.0])
     assert _sim(result.session_dir, 1)["fields"]["club_speed"]["text"] == "73.2"
@@ -324,6 +328,34 @@ def test_a_swing_whose_panel_moved_a_row_reads_blank(tmp_path, caplog):
     assert all(f["text"] is None for f in moved["fields"].values())
     assert "swing-02: readout panel moved" in caplog.text
     assert _sim(result.session_dir, 3)["fields"]["club_speed"]["text"] == "73.2"
+
+
+def test_a_swing_whose_panel_drifted_four_pixels_still_reads(tmp_path, caplog):
+    video = _moved_video(tmp_path / "drift.mp4", 4)
+    with caplog.at_level(logging.INFO, logger="golf_etl.pipeline"):
+        result = _process(video, tmp_path / "out", [1.0, 9.0, 17.0])
+    assert _sim(result.session_dir, 2)["fields"]["club_speed"]["text"] == "73.2"
+    assert "panel moved" not in caplog.text
+
+
+def test_a_swing_whose_checked_frames_find_no_panel_still_reads(tmp_path, caplog):
+    # someone stands in front of the panel from 3.3 to 3.8s and 4.3 to 4.8s, when swing 1's
+    # frames are searched for it, but not at 4, 5 and 6s, when the session's box is found
+    covered = _screen_still("4761-s1")
+    covered[180:470, 1360:1530] = (25, 25, 35)
+    stills = [
+        (_screen_still("4762-s8"), 1.0),
+        (_screen_still("4761-s1"), 2.3),
+        (covered, 0.5),
+        (_screen_still("4761-s1"), 0.5),
+        (covered, 0.5),
+        (_screen_still("4761-s1"), 11.2),
+    ]
+    video = _still_video(tmp_path / "covered.mp4", stills)
+    with caplog.at_level(logging.INFO, logger="golf_etl.pipeline"):
+        result = _process(video, tmp_path / "out", [1.0])
+    assert _sim(result.session_dir, 1)["fields"]["club_speed"]["text"] == "73.2"
+    assert "panel moved" not in caplog.text
 
 
 def test_a_swing_that_fails_to_read_gets_no_sim_json(tmp_path, screen_video, monkeypatch, caplog):

@@ -50,7 +50,11 @@ log = logging.getLogger(__name__)
 PANEL_SWINGS = 5  # swings searched for the readout panel
 PANEL_AFTER_S = (3.0, 4.0, 5.0)  # after each impact, when the panel shows that swing's shot
 PANEL_CHECKS = (1, 3)  # of each swing's frames read, searched again for the panel
-PANEL_MOVED_PX = 3  # a swing whose panel is farther than this on an edge from the session's
+# A swing whose panel is farther than this on an edge from the session's box was moved, and its
+# fields are left blank. Reads stay right with the box off by up to 5px every way on every fixture
+# (the first wrong read is 6px diagonal), IMG_4457 drifts 3px over its session, and a camera bump
+# that moves the panel a row moves it about 40px.
+PANEL_MOVED_PX = 5
 
 
 @dataclass(frozen=True)
@@ -304,9 +308,12 @@ def _write_sim(
         # a read bug costs this swing its numbers, not the whole session
         log.exception("sim read failed for %s", out.name)
         return None
-    if found and not any(same_panel(p, panel, PANEL_MOVED_PX) for p in found):
-        boxes = [p.box if p else None for p in found]
-        log.info("%s: readout panel moved to %s; sim fields left blank", out.name, boxes)
+    # a frame with no panel found (someone in front of the screen) is no evidence either way
+    boxes = [p for p in found if p is not None]
+    if boxes and not any(same_panel(p, panel, PANEL_MOVED_PX) for p in boxes):
+        log.info(
+            "%s: readout panel moved to %s; sim fields left blank", out.name, [p.box for p in boxes]
+        )
         shot = blank_shot(shot.frames)
     if shot.unchanged:
         log.info("%s: the screen did not change after impact; sim fields left blank", out.name)
