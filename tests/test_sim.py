@@ -17,6 +17,7 @@ from golf_etl.sim import (
     _split,
     before_window,
     build_glyphs,
+    counts_settled,
     cut_glyphs,
     find_panel,
     pick_panel,
@@ -345,6 +346,31 @@ def test_before_window_stays_clear_of_the_previous_impact_and_the_video_start():
     assert before_window(100.0, 80.0) == (98.5, 99.75)
     assert before_window(100.0, 99.0) == (100.0, 99.75)  # empty: the previous shot just landed
     assert before_window(1.0, None) == (0.0, 0.75)
+
+
+def _counting_frames():
+    """4761-s1 frames with carry_raw's 110.0 drawn over carry_game and total_length."""
+    rgb, _ = load("4761-s1")
+    rgb = rgb.copy()
+    boxes = dict(zip(FIELDS, value_boxes(PANEL_BOXES["4761-s1"]), strict=True))
+    x0, x1, y0, y1 = boxes["carry_raw"]
+    for f in ("carry_game", "total_length"):
+        bx0, _, by0, _ = boxes[f]
+        rgb[by0 : by0 + y1 - y0, bx0 : bx0 + x1 - x0] = rgb[y0:y1, x0:x1]
+    return [(t, rgb) for t in (102.0, 102.5, 103.0)]
+
+
+def test_counting_fields_are_blank_when_the_window_ends_before_they_settle(glyphs):
+    frames = _counting_frames()
+    panel = Panel(PANEL_BOXES["4761-s1"], 0.5)
+    _, end = shot_window(100.0, 600.0, 112.0, 2.5)  # the next swing's clip starts at 109.5
+    shot = read_shot(frames, panel, glyphs, settled=counts_settled(100.0, end))
+    assert shot.values["carry_game"] is None and shot.values["total_length"] is None
+    assert shot.votes["total_length"] == 0 and "total_length" not in shot.first_seen_s
+    assert shot.values["carry_raw"] == "110.0"
+    _, end = shot_window(100.0, 600.0, None, 2.5)
+    shot = read_shot(frames, panel, glyphs, settled=counts_settled(100.0, end))
+    assert shot.values["carry_game"] == shot.values["total_length"] == "110.0"
 
 
 def test_sim_json_has_every_field(tmp_path, glyphs):

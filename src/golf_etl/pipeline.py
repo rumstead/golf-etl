@@ -35,6 +35,7 @@ from golf_etl.sim import (
     Panel,
     SimShot,
     before_window,
+    counts_settled,
     find_panel,
     pick_panel,
     read_shot,
@@ -291,7 +292,8 @@ def _write_sim(
             if before_start < before_end
             else []
         )
-        shot = read_shot(frames, panel, _glyphs(), before)
+        settled = counts_settled(impact_s, end)
+        shot = read_shot(frames, panel, _glyphs(), before, settled)
     except Exception:
         # a read bug costs this swing its numbers, not the whole session
         log.exception("sim read failed for %s", out.name)

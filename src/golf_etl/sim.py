@@ -99,6 +99,8 @@ MIN_PANELS = 3  # agreeing panels needed to trust a box
 # after the previous swing's impact) the previous shot's numbers are up.
 BEFORE_START_S, BEFORE_END_S, AFTER_PREVIOUS_S = 1.5, 0.25, 1.0
 MIN_COMPARED = 4  # fields read before and after impact needed to call the screen unchanged
+COUNTING = ("carry_game", "total_length")  # fields that count up while the ball flies and rolls
+COUNTS_SETTLE_S = 13.0  # after impact; the roll holds its next-to-last value for about 2.5s
 
 Box = tuple[int, int, int, int]  # x0, x1, y0, y1
 
@@ -205,6 +207,11 @@ def shot_window(
     return impact_s + START_AFTER_S, min(ends)
 
 
+def counts_settled(impact_s: float, window_end_s: float) -> bool:
+    """Whether a shot window ending at `window_end_s` reaches the counting fields' final values."""
+    return window_end_s >= impact_s + COUNTS_SETTLE_S
+
+
 def before_window(impact_s: float, previous_impact_s: float | None) -> tuple[float, float]:
     """The span of video before impact that still shows the previous shot's numbers."""
     starts = [0.0, impact_s - BEFORE_START_S]
@@ -234,8 +241,12 @@ def read_shot(
     panel: Panel,
     glyphs: Glyphs,
     before: Iterable[tuple[float, np.ndarray]] = (),
+    settled: bool = True,
 ) -> SimShot:
     """Every field read in each (time, RGB frame) and voted across the frames.
+
+    Without `settled` (see `counts_settled`) the COUNTING fields are blank: the frames may end
+    while they still show a value short of the final one.
 
     `before` are frames from just before impact. When most fields read there equal the winners,
     the screen never showed a new shot: a swing the simulator did not register, or no shot at
@@ -245,6 +256,8 @@ def read_shot(
     values, votes, first_seen = {}, {}, {}
     for field, found in reads.items():
         values[field], votes[field] = vote([text for _, text in found])
+        if field in COUNTING and not settled:
+            values[field], votes[field] = None, 0
         if values[field] is not None:
             first_seen[field] = next(t for t, text in found if text == values[field])
     count = len(reads[FIELDS[0]])
