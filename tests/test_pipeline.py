@@ -326,14 +326,16 @@ def test_a_swing_whose_panel_moved_a_row_reads_blank(tmp_path, caplog):
     assert _sim(result.session_dir, 3)["fields"]["club_speed"]["text"] == "73.2"
 
 
-def test_a_swing_that_fails_to_read_gets_no_sim_json(tmp_path, screen_video, monkeypatch):
+def test_a_swing_that_fails_to_read_gets_no_sim_json(tmp_path, screen_video, monkeypatch, caplog):
     from golf_etl import pipeline
 
-    def broken(frames, panel, glyphs, before):
+    def broken(frames, panel, glyphs, before=(), settled=True):
         raise ValueError("unreadable")
 
     monkeypatch.setattr(pipeline, "read_shot", broken)
-    result = _process(screen_video, tmp_path / "out", [1.0])
+    with caplog.at_level(logging.INFO, logger="golf_etl.pipeline"):
+        result = _process(screen_video, tmp_path / "out", [1.0])
+    assert "ValueError: unreadable" in caplog.text
     assert not (result.session_dir / "swing-01" / "sim.json").exists()
     text = (result.session_dir / "session.md").read_text()
     assert "| swing-01 | | | | | | | | | | | | |" in text.split("## Sim")[1]
