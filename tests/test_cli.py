@@ -3,7 +3,9 @@ import shutil
 import pytest
 
 from golf_etl.cli import main
+from golf_etl.sim import FIELDS, Glyphs, value_boxes
 from tests.conftest import make_video_with_clicks, tree
+from tests.sim_fixtures import load
 
 
 def test_unknown_command_is_a_usage_error():
@@ -143,3 +145,29 @@ def test_migrate_drive_moves_a_local_folder_session_to_the_repo(
         "s1: copied and deleted from Drive",
         "1 copied, 1 deleted, 0 kept",
     ]
+
+
+def test_sim_glyphs_and_eval_sim_are_subcommands(tmp_path, monkeypatch, capsys):
+    rgb, labels = load("4761-s1")
+    boxes = value_boxes((40, 166, 40, 283))
+    cells = [
+        ("a.MOV", rgb[y0:y1, x0:x1], field, labels[field])
+        for field, (x0, x1, y0, y1) in zip(FIELDS, boxes, strict=True)
+        if labels[field]
+    ]
+    monkeypatch.setattr("golf_etl.sim_eval.labeled_cells", lambda path: iter(cells))
+    out = tmp_path / "glyphs.npz"
+    assert main(["sim-glyphs", str(tmp_path / "labels.yaml"), str(out)]) == 0
+    assert len(Glyphs.load(out).labels) > 0
+
+    used = []
+
+    def score(path, glyphs_for):
+        used.append(len(glyphs_for("a.MOV").labels))
+        return 1, 0, 0, ["total: right 1, wrong 0, blank 0"]
+
+    monkeypatch.setattr("golf_etl.sim_eval.score", score)
+    assert main(["eval-sim", str(tmp_path / "labels.yaml"), "--glyphs", str(out)]) == 0
+    assert main(["eval-sim", str(tmp_path / "labels.yaml")]) == 0
+    assert used == [len(Glyphs.load(out).labels), 0]  # held out: no other video to learn from
+    assert "total: right 1, wrong 0, blank 0" in capsys.readouterr().out
