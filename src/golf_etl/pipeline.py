@@ -93,7 +93,12 @@ def process_video(
     session_dir = out_root / sid
     session_dir.mkdir(parents=True, exist_ok=True)
     impacts = [s.impact_s for s in detection.swings]
-    panel = _find_panel(video, info, impacts, cfg)
+    try:
+        panel = _find_panel(video, info, impacts, cfg)
+    except Exception:
+        # a panel search bug costs the session its sim numbers, not the rest of the session
+        log.exception("readout panel search failed")
+        panel = None
     balls, timings, sims = [], [], []
     for n, swing in enumerate(detection.swings, 1):
         next_impact = impacts[n] if n < len(impacts) else None
@@ -253,7 +258,11 @@ def _find_panel(video: Path, info: VideoInfo, impacts: list[float], cfg: Setting
             if start <= t < end:
                 window = list(read_frames(video, info, t, min(t + 1.5 / info.fps, end)))
                 found += [find_panel(img) for _, img in window[:1]]
-    return pick_panel(found)
+    panel = pick_panel(found)
+    if panel is None:
+        matched = sum(p is not None for p in found)
+        log.info("no readout panel: %d of %d frames matched", matched, len(found))
+    return panel
 
 
 def _write_sim(

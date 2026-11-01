@@ -83,7 +83,9 @@ A `lost:` track says why the ball could not be followed, and that swing has no g
 
 SIM_GUIDE = """\
 The numbers below are read off the simulator screen. A blank cell means the screen was covered \
-or unreadable in most frames; check `07-after-shot.jpg` for those.
+or unreadable in most frames; check `07-after-shot.jpg` for those. A row of blanks can also \
+mean the read failed, or that the next swing started before this shot's numbers showed; in that \
+case `07-after-shot.jpg` shows the previous shot.
 """
 
 SIM_COLUMNS = {

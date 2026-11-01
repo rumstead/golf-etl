@@ -117,32 +117,41 @@ def test_sim_table_lists_every_swing_with_blanks_for_unread_fields(tmp_path):
         "ball_speed": "89.7",
         "smash": "1.23",
         "carry_raw": "110.0",
-        "carry_game": None,
+        "carry_game": "109.8",
         "total_length": "121.4",
         "peak_height": "33.8",
         "back_spin": "3365",
         "total_spin": "3554",
         "club_path": "1.0 I-O",
         "face_to_path": "5.5 C",
-        "face_to_target": None,
+        "face_to_target": "4.6 O",
     }
-    shot = SimShot(read, {f: 4 if read[f] else 0 for f in FIELDS}, 20, {})
-    swings = [Swing(24.4, 1.0, 16.0, swing_track(24.4)), Swing(49.6, 1.0, 16.0, None)]
+    partial = read | {"carry_game": None, "face_to_target": None}
+    sims = [
+        SimShot(read, dict.fromkeys(FIELDS, 4), 20, {}),
+        SimShot(partial, {f: 4 if partial[f] else 0 for f in FIELDS}, 20, {}),
+        None,
+    ]
+    swings = [Swing(t, 1.0, 16.0, swing_track(t)) for t in (24.4, 49.6, 86.6)]
     timing = Timing(23.2, 24.0, 24.4, 144, 240, 288)
-    write_session_md(path, summary(swings=swings, sims=[shot, None], timings=[timing] * 2))
+    write_session_md(path, summary(swings=swings, sims=sims, timings=[timing] * 3))
     text = path.read_text()
     sim = text.split("## Sim")[1].split("## Timing")[0]
-    assert "`07-after-shot.jpg`" in sim
+    assert "`07-after-shot.jpg`" in sim and "next swing" in sim
     header = (
         "| Swing | Club mph | Ball mph | Smash | Carry raw yd | Carry game yd | Total yd "
         "| Peak ft | Back spin | Total spin | Path | Face to path | Face to target |"
     )
     assert header in sim
     assert (
-        "| swing-01 | 73.2 | 89.7 | 1.23 | 110.0 | | 121.4 | 33.8 | 3365 | 3554 "
+        "| swing-01 | 73.2 | 89.7 | 1.23 | 110.0 | 109.8 | 121.4 | 33.8 | 3365 | 3554 "
+        "| 1.0 I-O | 5.5 C | 4.6 O |" in sim
+    )
+    assert (
+        "| swing-02 | 73.2 | 89.7 | 1.23 | 110.0 | | 121.4 | 33.8 | 3365 | 3554 "
         "| 1.0 I-O | 5.5 C | |" in sim
     )
-    assert "| swing-02 | | | | | | | | | | | | |" in sim
+    assert "| swing-03 | | | | | | | | | | | | |" in sim
     assert text.index("| swing-01 | 24.40s") < text.index("## Sim") < text.index("## Timing")
 
 

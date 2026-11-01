@@ -1,4 +1,5 @@
 import json
+import logging
 import re
 import subprocess
 from datetime import UTC, datetime
@@ -226,11 +227,13 @@ def _process(video, out, swings):
     )
 
 
-def test_a_video_without_a_screen_writes_no_sim_json(tmp_path):
+def test_a_video_without_a_screen_writes_no_sim_json(tmp_path, caplog):
     video = make_video_with_clicks(tmp_path / "range.mp4", [1.0], seconds=8.0, size="640x360")
-    result = _process(video, tmp_path / "out", [1.0])
+    with caplog.at_level(logging.INFO, logger="golf_etl.pipeline"):
+        result = _process(video, tmp_path / "out", [1.0])
     assert not (result.session_dir / "swing-01" / "sim.json").exists()
     assert "## Sim" not in (result.session_dir / "session.md").read_text()
+    assert "no readout panel: 0 of 3 frames matched" in caplog.text
 
 
 @pytest.fixture(scope="module")
@@ -286,6 +289,20 @@ def test_a_swing_that_fails_to_read_gets_no_sim_json(tmp_path, screen_video, mon
     assert not (result.session_dir / "swing-01" / "sim.json").exists()
     text = (result.session_dir / "session.md").read_text()
     assert "| swing-01 | | | | | | | | | | | | |" in text.split("## Sim")[1]
+
+
+def test_a_panel_search_that_fails_still_writes_the_session(tmp_path, screen_video, monkeypatch):
+    from golf_etl import pipeline
+
+    def broken(frame):
+        raise ValueError("no edges")
+
+    monkeypatch.setattr(pipeline, "find_panel", broken)
+    result = _process(screen_video, tmp_path / "out", [1.0])
+    swing = result.session_dir / "swing-01"
+    assert sorted(p.name for p in swing.iterdir()) == EXPECTED
+    text = (result.session_dir / "session.md").read_text()
+    assert "## Sim" not in text and "## Timing" in text
 
 
 def test_file_that_is_not_a_video_raises(tmp_path):
