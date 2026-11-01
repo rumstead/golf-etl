@@ -63,3 +63,42 @@ range.png:
   total_spin: null
   face_to_target: null
   club_speed: null
+4758-row-low.png:
+  club_path: null
+  carry_game: null
+  face_to_path: null
+  carry_raw: null
+  back_spin: null
+  total_length: null
+  smash: null
+  ball_speed: null
+  peak_height: null
+  total_spin: null
+  face_to_target: null
+  club_speed: null
+4758-no-labels.png:
+  club_path: null
+  carry_game: null
+  face_to_path: null
+  carry_raw: null
+  back_spin: null
+  total_length: null
+  smash: null
+  ball_speed: null
+  peak_height: null
+  total_spin: null
+  face_to_target: null
+  club_speed: null
+wall.png:
+  club_path: null
+  carry_game: null
+  face_to_path: null
+  carry_raw: null
+  back_spin: null
+  total_length: null
+  smash: null
+  ball_speed: null
+  peak_height: null
+  total_spin: null
+  face_to_target: null
+  club_speed: null

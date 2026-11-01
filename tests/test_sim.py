@@ -34,6 +34,9 @@ PANEL_BOXES = {
     "4758-s1-white": (42, 149, 41, 252),
     "4758-s2-tinted": (42, 149, 41, 252),
 }
+# IMG_4758 frames cut to (1170, 1380, 200, 520) at 119 s and (1190, 1360, 225, 485) at 72 s
+ROW_LOW_BOX = (51, 158, 48, 259)
+NO_LABELS_BOX = (31, 138, 23, 234)
 # The dim 4 breaks apart in this single tinted frame, so the cell reads blank.
 READS_BLANK = {("4758-s2-tinted", "club_path")}
 
@@ -182,6 +185,36 @@ def test_finds_a_scaled_panel_pasted_into_a_blank_frame():
 
 def test_no_panel_in_a_frame_without_a_screen():
     assert find_panel(load("range")[0]) is None
+
+
+def test_no_panel_in_the_frame_without_a_screen_that_scores_highest():
+    # IMG_4626 at 15 s: a door frame on a white wall
+    assert find_panel(load("wall")[0]) is None
+
+
+def test_finds_the_panel_when_the_best_coarse_hit_is_a_row_low():
+    # IMG_4758 at 119 s: at half size the panel matches best one row low
+    panel = find_panel(load("4758-row-low")[0])
+    assert panel is not None
+    errors = [a - b for a, b in zip(panel.box, ROW_LOW_BOX, strict=True)]
+    assert all(abs(e) <= 2 for e in errors), (panel.box, errors)
+
+
+def test_finds_the_panel_when_the_labels_are_hidden():
+    # IMG_4758 at 72 s, kept gray: the projector color hides the labels under the values
+    panel = find_panel(load("4758-no-labels")[0])
+    assert panel is not None
+    errors = [a - b for a, b in zip(panel.box, NO_LABELS_BOX, strict=True)]
+    assert all(abs(e) <= 2 for e in errors), (panel.box, errors)
+
+
+def test_an_empty_frame_has_no_panel():
+    assert find_panel(np.zeros((0, 0, 3), np.uint8)) is None
+
+
+def test_a_float_frame_finds_the_same_panel():
+    rgb, _ = load("4761-s1")
+    assert find_panel(rgb.astype(np.float32)) == find_panel(rgb)
 
 
 @pytest.mark.parametrize("name", PANEL_SIZES)

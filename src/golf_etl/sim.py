@@ -73,8 +73,13 @@ CANNY = (50, 150)
 EDGE_BLUR = 1.0  # px sigma, so edges a px apart still match
 COARSE_SIZE = 0.5  # frame scale for the coarse pass
 COARSE_SCALES = np.round(np.arange(0.6, 1.41, 0.05), 2)  # of the reference size
-FINE_SCALES = np.round(np.arange(-0.05, 0.051, 0.01), 2)  # around the best coarse scale
-ROI_MARGIN = 0.15  # of the coarse box height, searched around it at full size
+COARSE_HITS = 3  # best coarse hits refined at full size
+HIT_SPACING = 0.5  # of the panel height between coarse hits
+FINE_SCALES = np.round(np.arange(-0.05, 0.051, 0.01), 2)  # around a coarse hit's scale
+HEIGHT_SCALES = np.round(np.arange(-0.05, 0.051, 0.01), 2)  # height scale less width scale
+ROI_MARGIN = 0.25  # of the coarse box height searched around it at full size, more than a row
+LABEL_BAND = (0.6, 0.86)  # of a panel row, where the labels sit under the value
+SETTLE_REACH = 0.33  # of a panel row, how far the box may move up or down as it settles
 MIN_PANEL_SCORE = 0.29  # halfway between the weakest panel (0.335) and best no-panel frame (0.246)
 
 Box = tuple[int, int, int, int]  # x0, x1, y0, y1
@@ -83,7 +88,7 @@ Box = tuple[int, int, int, int]  # x0, x1, y0, y1
 @dataclass(frozen=True)
 class Panel:
     box: Box
-    score: float  # TM_CCOEFF_NORMED of the frame's edges against the reference
+    score: float  # TM_CCOEFF_NORMED of the frame's edges against the reference, before settling
 
 
 @dataclass(frozen=True)
@@ -131,7 +136,7 @@ def value_boxes(panel_box: Box) -> list[Box]:
 
 
 def find_panel(frame: np.ndarray) -> Panel | None:
-    """The readout panel in an RGB frame, or None when nothing matches the reference well enough."""
+    """The readout panel in an RGB frame (0 to 255), or None when nothing matches well enough."""
     panel = _best_panel(frame)
     return panel if panel and panel.score >= MIN_PANEL_SCORE else None
 
@@ -180,49 +185,116 @@ def read_cell(cell: np.ndarray, field: str, glyphs: Glyphs) -> str | None:
 def _best_panel(frame: np.ndarray) -> Panel | None:
     """The best match of the reference, whatever its score.
 
-    The reference is matched over COARSE_SCALES on a COARSE_SIZE frame, then over FINE_SCALES at
-    full size near the hit.
+    The reference is matched over COARSE_SCALES on a COARSE_SIZE frame. The best COARSE_HITS hits
+    that sit apart are each refined at full size, and the best refined match wins.
     """
+    if not frame.size:
+        return None
     edges = _edges(frame)
     small = cv2.resize(edges, None, fx=COARSE_SIZE, fy=COARSE_SIZE, interpolation=cv2.INTER_AREA)
-    coarse = {s: hit for s in COARSE_SCALES if (hit := _match(small, s * COARSE_SIZE))}
-    if not coarse:
-        return None
-    scale = max(coarse, key=lambda s: coarse[s][0])
-    x0, x1, y0, y1 = (round(v / COARSE_SIZE) for v in coarse[scale][1])
+    hits = [
+        (score, box, scale)
+        for scale in COARSE_SCALES
+        for score, box in _peaks(small, scale * COARSE_SIZE, scale * COARSE_SIZE, COARSE_HITS)
+    ]
+    starts: list[tuple[Box, float]] = []
+    for _, box, scale in sorted(hits, key=lambda h: -h[0]):
+        if all(_apart(box, other) for other, _ in starts):
+            starts.append((box, scale))
+        if len(starts) == COARSE_HITS:
+            break
+    panels = [p for box, scale in starts if (p := _refine(edges, box, scale))]
+    return max(panels, key=lambda p: p.score, default=None)
+
+
+def _refine(edges: np.ndarray, coarse_box: Box, scale: float) -> Panel | None:
+    """The best match near a coarse hit: over FINE_SCALES, then over HEIGHT_SCALES for the height.
+
+    The box then settles where the whole panel and its value rows line up best together.
+    """
+    x0, x1, y0, y1 = (round(v / COARSE_SIZE) for v in coarse_box)
     margin = round(ROI_MARGIN * (y1 - y0)) + 2
     left, top = max(0, x0 - margin), max(0, y0 - margin)
     roi = edges[top : y1 + margin, left : x1 + margin]
-    fine = [hit for s in scale + FINE_SCALES if (hit := _match(roi, s))]
+    fine = [(hit, s) for s in scale + FINE_SCALES for hit in _peaks(roi, s, s)]
     if not fine:
         return None
-    score, (bx0, bx1, by0, by1) = max(fine, key=lambda h: h[0])
-    return Panel((bx0 + left, bx1 + left, by0 + top, by1 + top), score)
+    _, scale = max(fine, key=lambda f: f[0][0])
+    tall = [hit for sy in scale + HEIGHT_SCALES for hit in _peaks(roi, scale, sy)]
+    score, (bx0, bx1, by0, by1) = max(tall, key=lambda h: h[0])
+    return Panel(_settle(edges, (bx0 + left, bx1 + left, by0 + top, by1 + top)), score)
 
 
-def _match(edges: np.ndarray, scale: float) -> tuple[float, Box] | None:
-    """Best score and box of the reference at `scale`, or None when it does not fit in `edges`."""
-    reference = _reference()
-    w, h = round(reference.shape[1] * scale), round(reference.shape[0] * scale)
+def _settle(edges: np.ndarray, box: Box) -> Box:
+    """The box moved up to SETTLE_REACH of a row up or down and 2 px sideways.
+
+    Some projector colors hide the labels. The whole panel then fits best a quarter of a row high,
+    and where the labels show, the value rows alone fit best a quarter of a row low. The sum of the
+    two scores peaks on the panel in both cases.
+    """
+    x0, x1, y0, y1 = box
+    w, h = x1 - x0, y1 - y0
+    reach = round(SETTLE_REACH * h / ROWS)
+    left, top = max(0, x0 - 2), max(0, y0 - reach)
+    window = edges[top : y1 + reach, left : x1 + 2]
+    if window.shape[0] < h or window.shape[1] < w:
+        return box
+    scores = sum(
+        cv2.matchTemplate(
+            window, cv2.resize(r, (w, h), interpolation=cv2.INTER_AREA), cv2.TM_CCOEFF_NORMED
+        )
+        for r in _references()
+    )
+    _, _, _, (x, y) = cv2.minMaxLoc(scores)
+    return (left + x, left + x + w, top + y, top + y + h)
+
+
+def _peaks(edges: np.ndarray, sx: float, sy: float, count: int = 1) -> list[tuple[float, Box]]:
+    """Up to `count` best scores and boxes of the reference scaled sx wide and sy high.
+
+    Each peak blanks the scores within HIT_SPACING of the panel height around it. Empty when the
+    reference does not fit in `edges`.
+    """
+    reference, _ = _references()
+    w, h = round(reference.shape[1] * sx), round(reference.shape[0] * sy)
     if w > edges.shape[1] or h > edges.shape[0]:
-        return None
+        return []
     template = cv2.resize(reference, (w, h), interpolation=cv2.INTER_AREA)
     scores = cv2.matchTemplate(edges, template, cv2.TM_CCOEFF_NORMED)
-    _, score, _, (x, y) = cv2.minMaxLoc(scores)
-    return float(score), (x, x + w, y, y + h)
+    reach = int(HIT_SPACING * h)
+    peaks = []
+    for _ in range(count):
+        _, score, _, (x, y) = cv2.minMaxLoc(scores)
+        peaks.append((float(score), (x, x + w, y, y + h)))
+        scores[max(0, y - reach) : y + reach + 1, max(0, x - reach) : x + reach + 1] = -1
+    return peaks
+
+
+def _apart(a: Box, b: Box) -> bool:
+    """Whether two boxes' centers are at least HIT_SPACING of the taller one's height apart."""
+    dx = (a[0] + a[1] - b[0] - b[1]) / 2
+    dy = (a[2] + a[3] - b[2] - b[3]) / 2
+    return np.hypot(dx, dy) >= HIT_SPACING * max(a[3] - a[2], b[3] - b[2])
 
 
 @cache
-def _reference() -> np.ndarray:
+def _references() -> tuple[np.ndarray, np.ndarray]:
+    """The blurred reference edges: the whole panel, and its value rows with the labels blanked."""
     edges = cv2.imread(str(PANEL_REFERENCE), cv2.IMREAD_GRAYSCALE)
-    return cv2.GaussianBlur(edges, (0, 0), EDGE_BLUR)
+    values = edges.copy()
+    row = edges.shape[0] / ROWS
+    for k in range(ROWS):
+        values[round((k + LABEL_BAND[0]) * row) : round((k + LABEL_BAND[1]) * row)] = 0
+    return tuple(cv2.GaussianBlur(e, (0, 0), EDGE_BLUR) for e in (edges, values))
 
 
 def _edges(rgb: np.ndarray) -> np.ndarray:
-    """Blurred Canny edges, strongest over the color channels.
+    """Blurred Canny edges, strongest over the color channels. Other dtypes are clipped to uint8.
 
     They stay uint8: in a blurred float map, near flat areas give spurious scores close to 1.
     """
+    if rgb.dtype != np.uint8:
+        rgb = np.clip(rgb, 0, 255).astype(np.uint8)
     edges = cv2.Canny(np.ascontiguousarray(rgb), *CANNY)
     return cv2.GaussianBlur(edges, (0, 0), EDGE_BLUR)
 
