@@ -5,6 +5,7 @@ import numpy as np
 import pytest
 
 from golf_etl.sim import (
+    COLUMNS,
     DIGIT_HEIGHT,
     FIELDS,
     THRESHOLDS,
@@ -186,8 +187,15 @@ SKIN, DENIM, DARK, BRICK, WHITE = (
     ],
 )
 def test_a_patch_over_part_of_a_number_reads_nothing(name, field, side, column, color, glyphs):
-    cells, _ = _cells(name)
+    cells, labels = _cells(name)
     assert read_cell(_patched(cells[field], side, column, color), field, glyphs) is None
+    # the same patch over every cell in its column leaves the other column reading its labels
+    i = FIELDS.index(field)
+    for f in FIELDS[i % COLUMNS :: COLUMNS]:
+        cells[f] = _patched(cells[f], side, column, color)
+    other = [f for f in FIELDS[1 - i % COLUMNS :: COLUMNS] if labels[f]]
+    reads = {f: read_cell(cells[f], f, glyphs) for f in other}
+    assert reads == {f: None if (name, f) in READS_BLANK else labels[f] for f in other}
 
 
 @pytest.mark.parametrize("name", PANEL_SIZES)
