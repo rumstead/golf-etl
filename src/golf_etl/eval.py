@@ -1,6 +1,6 @@
 """Detection accuracy against hand-labeled impact times."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -45,8 +45,15 @@ class Score:
         )
 
 
-def score(predicted: list[float], truth: list[float], tolerance_s: float) -> Score:
-    """Greedy one-to-one match of each true impact to the closest unused prediction."""
+def score(
+    predicted: list[float], truth: list[float], tolerance_s: float, no_ball: Sequence[float] = ()
+) -> Score:
+    """Greedy one-to-one match of each true impact to the closest unused prediction.
+
+    A prediction left over within tolerance of a `no_ball` time (a practice swing, or a motion
+    like raking a ball over, that hit no ball) is neither a find nor a false swing, and one not
+    found is not a miss.
+    """
     s = Score()
     unused = sorted(predicted)
     for t in sorted(truth):
@@ -57,6 +64,10 @@ def score(predicted: list[float], truth: list[float], tolerance_s: float) -> Sco
             s.errors_ms.append(abs(best - t) * 1000)
         else:
             s.false_neg += 1
+    for t in no_ball:
+        best = min(unused, key=lambda p: abs(p - t), default=None)
+        if best is not None and abs(best - t) <= tolerance_s:
+            unused.remove(best)
     s.false_pos = len(unused)
     return s
 
@@ -70,7 +81,9 @@ def run(
     for entry in labels["videos"]:
         video = (labels_path.parent / entry["path"]).resolve()
         tolerance = entry.get("tolerance_ms", tolerance_s * 1000) / 1000
-        s = score(detect_times(video, cfg), [float(t) for t in entry["impacts"]], tolerance)
+        impacts = [float(t) for t in entry["impacts"]]
+        no_ball = [float(t) for t in entry.get("no_ball", [])]
+        s = score(detect_times(video, cfg), impacts, tolerance, no_ball)
         total.add(s)
         lines.append(s.line(entry["path"]))
     lines.append(total.line("total"))

@@ -22,6 +22,16 @@ def test_one_prediction_cannot_match_two_impacts():
     assert (s.true_pos, s.false_neg) == (1, 1)
 
 
+def test_a_no_ball_motion_is_neither_found_nor_false():
+    s = score([5.0, 9.0, 30.0], [5.0], tolerance_s=0.15, no_ball=[9.05, 20.0])
+    assert (s.true_pos, s.false_pos, s.false_neg) == (1, 1, 0)
+
+
+def test_a_strike_is_matched_before_a_no_ball_motion_next_to_it():
+    s = score([10.0], [10.1], tolerance_s=0.15, no_ball=[9.95])
+    assert (s.true_pos, s.false_pos, s.false_neg) == (1, 0, 0)
+
+
 def test_empty_inputs_are_perfect():
     s = score([], [], 0.15)
     assert s.precision == 1.0 and s.recall == 1.0
@@ -52,3 +62,11 @@ def test_a_video_can_override_the_tolerance(tmp_path):
     )
     total, _ = run(tmp_path / "labels.yaml", Settings(), lambda video, cfg: [5.05])
     assert (total.true_pos, total.false_neg) == (1, 1)  # only rough.mov allows 50ms
+
+
+def test_run_reads_a_videos_no_ball_motions(tmp_path):
+    (tmp_path / "labels.yaml").write_text(
+        "tolerance_ms: 100\nvideos:\n  - path: a.mov\n    impacts: [5.0]\n    no_ball: [9.0]\n"
+    )
+    total, _ = run(tmp_path / "labels.yaml", Settings(), lambda video, cfg: [5.0, 9.02])
+    assert (total.true_pos, total.false_pos, total.false_neg) == (1, 0, 0)
