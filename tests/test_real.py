@@ -51,7 +51,9 @@ def test_every_labeled_video_processes_into_claude_sized_frames(tmp_path):
             checksum=checksum,
             uploaded_at=datetime.now(UTC),
         )
-        assert result.swings == len(entry["impacts"])
+        # no_ball motions may or may not be found; test_detection_matches_the_labels scores them
+        found = len(entry["impacts"])
+        assert found <= result.swings <= found + len(entry.get("no_ball", [])), entry["path"]
         sessions.add(result.session_id)
         for jpg in result.session_dir.glob("swing-*/*.jpg"):
             with Image.open(jpg) as img:

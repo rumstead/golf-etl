@@ -55,6 +55,7 @@ tolerance_ms: 17  # two frames at 120fps
 videos:
   - path: IMG_4439-a.mov
     impacts: [4.368]  # first frame with the clubface on the ball
+    no_ball: [9.1]  # optional: practice swings and other motions that hit no ball, not scored
 ```
 
 ```sh
