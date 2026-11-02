@@ -420,6 +420,23 @@ def test_a_screen_that_shows_another_shot_before_impact_reads_the_new_one(glyphs
     assert shot.values["club_speed"] == labels["club_speed"]
 
 
+def test_a_screen_that_still_shows_the_previous_swings_numbers_reads_blank(glyphs):
+    # the panel was hidden before impact, so only the previous swing's numbers can tell
+    frames, labels = _shot_frames()
+    previous = {f: labels[f] for f in FIELDS}
+    shot = read_shot(frames, Panel(PANEL_BOXES["4761-s1"], 0.5), glyphs, previous=previous)
+    assert shot.unchanged
+    assert shot.values == dict.fromkeys(FIELDS)
+
+
+def test_a_screen_that_shows_other_numbers_than_the_previous_swing_reads_them(glyphs):
+    frames, labels = _shot_frames()
+    _, other = load("4762-s8")
+    shot = read_shot(frames, Panel(PANEL_BOXES["4761-s1"], 0.5), glyphs, previous=other)
+    assert not shot.unchanged
+    assert shot.values["club_speed"] == labels["club_speed"]
+
+
 def test_no_reads_before_impact_leave_the_shot_as_read(glyphs):
     frames, labels = _shot_frames()
     blank = np.empty_like(frames[0][1])

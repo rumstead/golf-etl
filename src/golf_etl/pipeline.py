@@ -110,6 +110,7 @@ def process_video(
         log.exception("readout panel search failed")
         panel = None
     balls, timings, sims = [], [], []
+    last_read: dict[str, str | None] | None = None  # the latest swing the screen gave numbers for
     for n, swing in enumerate(detection.swings, 1):
         next_impact = impacts[n] if n < len(impacts) else None
         neighbors = (impacts[n - 2] if n > 1 else None, next_impact)
@@ -118,7 +119,10 @@ def process_video(
         balls.append(flight)
         timings.append(timing)
         if panel is not None:
-            sims.append(_write_sim(video, info, swing.impact_s, neighbors, panel, out, cfg))
+            shot = _write_sim(video, info, swing.impact_s, neighbors, panel, out, cfg, last_read)
+            sims.append(shot)
+            if shot is not None and any(shot.values.values()):
+                last_read = shot.values
     balls, ball_median = grade(balls, cfg.ball_good, cfg.ball_poor)
     for n, flight in enumerate(balls, 1):
         write_ball_json(
@@ -284,12 +288,13 @@ def _write_sim(
     panel: Panel,
     out: Path,
     cfg: Settings,
+    previous: dict[str, str | None] | None = None,
 ) -> SimShot | None:
     """Read the panel over the swing's shot window and write sim.json; None when the read fails.
 
     `neighbors` are the previous and next swings' impacts. A window the next swing cuts off
     before the readout appears reads no frames, so every field is blank. The frames just before
-    impact are read too, to tell whether the screen changed."""
+    impact, and `previous`, the latest swing's numbers, tell whether the screen changed."""
     previous_impact_s, next_impact_s = neighbors
     start, end = shot_window(impact_s, info.duration_s, next_impact_s, cfg.pre_impact_s)
     before_start, before_end = before_window(impact_s, previous_impact_s)
@@ -303,7 +308,7 @@ def _write_sim(
             else []
         )
         settled = counts_settled(impact_s, end)
-        shot = read_shot(frames, panel, _glyphs(), before, settled)
+        shot = read_shot(frames, panel, _glyphs(), before, settled, previous)
     except Exception:
         # a read bug costs this swing its numbers, not the whole session
         log.exception("sim read failed for %s", out.name)
