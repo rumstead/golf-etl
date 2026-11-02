@@ -28,7 +28,7 @@ Sessions on GitHub are never deleted. Poll once with `golf-etl poll`; it exits w
 - Sound on. Swings are found by the impact sound.
 
 ## Coaching in claude.ai
-`claude/skills/golf-swing-analysis/` is the claude.ai skill that knows how to read a session: it finds the newest folder in `sessions/` of the `golf-sessions` repo (add the repo to the chat with **+ > Add from GitHub** first), reads `session.md`, looks at each swing's full-size sequence sheet and impact zoom, uses the ball flight, timing, and simulator numbers it finds, asks about ball flight once when they do not settle it, and coaches. It names the source video and the time to scrub to in Photos for every swing it mentions. Zip the folder and upload it in claude.ai's skill settings (replacing an older copy), then ask:
+The claude.ai skill that knows how to read a session lives in the [ai-loadout](https://github.com/rumstead/ai-loadout) repo at `skills/golf-swing-analysis/`. It finds the newest folder in `sessions/` of the `golf-sessions` repo (add the repo to the chat with **+ > Add from GitHub** first), reads `session.md`, looks at each swing's full-size sequence sheet and impact zoom, uses the ball flight and timing numbers and the simulator numbers it reads off `07-after-shot.jpg`, asks about ball flight once when they do not settle it, and coaches. It names the source video and the time to scrub to in Photos for every swing it mentions. Upload the `golf-swing-analysis.zip` from the latest `golf-swing-analysis` release in that repo in claude.ai's skill settings (replacing an older copy), then ask:
 
 ```
 review my latest golf session

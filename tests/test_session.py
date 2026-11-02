@@ -11,6 +11,7 @@ from golf_etl.session import (
     video_time,
     write_session_md,
 )
+from golf_etl.sim import FIELDS, SimShot
 from tests.poses import swing_track
 
 WHEN = datetime(2026, 10, 1, 15, 4, tzinfo=UTC)
@@ -107,6 +108,67 @@ def test_timing_row_leaves_durations_out_when_the_top_is_out_of_frame(tmp_path):
     )
     row = "| swing-01 | 144 (11.20s) | hands not seen at the top | 288 (12.40s) | | | |"
     assert row in path.read_text()
+
+
+def test_sim_table_lists_every_swing_with_blanks_for_unread_fields(tmp_path):
+    path = tmp_path / "session.md"
+    read = {
+        "club_speed": "73.2",
+        "ball_speed": "89.7",
+        "smash": "1.23",
+        "carry_raw": "110.0",
+        "carry_game": "109.8",
+        "total_length": "121.4",
+        "peak_height": "33.8",
+        "back_spin": "3365",
+        "total_spin": "3554",
+        "club_path": "1.0 I-O",
+        "face_to_path": "5.5 C",
+        "face_to_target": "4.6 O",
+    }
+    partial = read | {"carry_game": None, "face_to_target": None}
+    sims = [
+        SimShot(read, dict.fromkeys(FIELDS, 4), 20, {}),
+        SimShot(partial, {f: 4 if partial[f] else 0 for f in FIELDS}, 20, {}),
+        None,
+    ]
+    swings = [Swing(t, 1.0, 16.0, swing_track(t)) for t in (24.4, 49.6, 86.6)]
+    timing = Timing(23.2, 24.0, 24.4, 144, 240, 288)
+    write_session_md(path, summary(swings=swings, sims=sims, timings=[timing] * 3))
+    text = path.read_text()
+    sim = text.split("## Sim")[1].split("## Timing")[0]
+    assert "`07-after-shot.jpg`" in sim and "next swing" in sim and "did not change" in sim
+    header = (
+        "| Swing | Club mph | Ball mph | Smash | Carry raw yd | Carry game yd | Total yd "
+        "| Peak ft | Back spin | Total spin | Path | Face to path | Face to target |"
+    )
+    assert header in sim
+    assert (
+        "| swing-01 | 73.2 | 89.7 | 1.23 | 110.0 | 109.8 | 121.4 | 33.8 | 3365 | 3554 "
+        "| 1.0 I-O | 5.5 C | 4.6 O |" in sim
+    )
+    assert (
+        "| swing-02 | 73.2 | 89.7 | 1.23 | 110.0 | | 121.4 | 33.8 | 3365 | 3554 "
+        "| 1.0 I-O | 5.5 C | |" in sim
+    )
+    assert "| swing-03 | | | | | | | | | | | | |" in sim
+    assert text.index("| swing-01 | 24.40s") < text.index("## Sim") < text.index("## Timing")
+
+
+def test_session_md_without_a_screen_has_no_sim_table(tmp_path):
+    write_session_md(tmp_path / "session.md", summary(swings=[Swing(12.4, 1.0, 16.0, None)]))
+    text = (tmp_path / "session.md").read_text()
+    assert "## Sim" not in text and "sim.json" not in text
+
+
+def test_the_reading_guide_names_sim_json_when_the_screen_is_read(tmp_path):
+    shot = SimShot(dict.fromkeys(FIELDS), dict.fromkeys(FIELDS, 0), 20, {})
+    swings = [Swing(12.4, 1.0, 16.0, swing_track(12.4))]
+    write_session_md(tmp_path / "session.md", summary(swings=swings, sims=[shot]))
+    guide = (tmp_path / "session.md").read_text().split("## Sim")[0]
+    assert "`sim.json`" in guide
+    after_shot = next(line for line in guide.splitlines() if "`07-after-shot.jpg`" in line)
+    assert "blank" in after_shot
 
 
 def test_session_md_with_no_swings_says_so(tmp_path):

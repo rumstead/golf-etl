@@ -4,6 +4,7 @@ import hashlib
 import logging
 import os
 import sys
+from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -24,6 +25,17 @@ def main(argv: list[str] | None = None) -> int:
     m = sub.add_parser("migrate-drive", help="move the Drive sessions to the GitHub repo")
     m.add_argument("--dry-run", action="store_true", help="print what it would copy and delete")
     sub.add_parser("upload-server", help="serve the upload page, its status, and tusd's hooks")
+    g = sub.add_parser("sim-glyphs", help="build sim readout glyphs from labeled videos")
+    g.add_argument("labels", type=Path)
+    g.add_argument("out", type=Path)
+    s = sub.add_parser("eval-sim", help="score sim readout reads against labeled screen text")
+    s.add_argument("labels", type=Path)
+    s.add_argument(
+        "--glyphs",
+        type=Path,
+        help="glyphs to read every video with; by default each video is read with glyphs "
+        "built from the other videos",
+    )
     args = parser.parse_args(argv)
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
     cfg = Settings.from_env()
@@ -34,6 +46,8 @@ def main(argv: list[str] | None = None) -> int:
         "poll-drive": cmd_poll,
         "migrate-drive": cmd_migrate,
         "upload-server": cmd_upload_server,
+        "sim-glyphs": cmd_sim_glyphs,
+        "eval-sim": cmd_eval_sim,
     }
     return commands[args.command](args, cfg)
 
@@ -55,6 +69,33 @@ def cmd_eval(args, cfg: Settings) -> int:
     from golf_etl.eval import detected_impacts, run
 
     _, lines = run(args.labels, cfg, detected_impacts)
+    print("\n".join(lines))
+    return 0
+
+
+def cmd_sim_glyphs(args, cfg: Settings) -> int:
+    from golf_etl.sim import build_glyphs
+    from golf_etl.sim_eval import labeled_cells
+
+    glyphs = build_glyphs((cell, text) for _, cell, _, text in labeled_cells(args.labels))
+    glyphs.save(args.out)
+    classes = Counter(glyphs.labels.tolist())
+    print(
+        f"{args.out}: {len(glyphs.labels)} glyphs, "
+        + " ".join(f"{c} {n}" for c, n in sorted(classes.items()))
+    )
+    return 0
+
+
+def cmd_eval_sim(args, cfg: Settings) -> int:
+    from golf_etl.sim import Glyphs
+    from golf_etl.sim_eval import held_out, score
+
+    if args.glyphs:
+        glyphs = Glyphs.load(args.glyphs)
+        _, _, _, lines = score(args.labels, lambda video: glyphs)
+    else:
+        _, _, _, lines = score(args.labels, held_out(args.labels))
     print("\n".join(lines))
     return 0
 

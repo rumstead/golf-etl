@@ -1,0 +1,158 @@
+4761-s1.png:
+  club_path: "1.0 I-O"
+  carry_game: null
+  face_to_path: "5.5 C"
+  carry_raw: "110.0"
+  back_spin: "3365"
+  total_length: null
+  smash: "1.23"
+  ball_speed: "89.7"
+  peak_height: "33.8"
+  total_spin: "3554"
+  face_to_target: "4.6 C"
+  club_speed: "73.2"
+4762-s8.png:
+  club_path: "3.9 I-O"
+  carry_game: null
+  face_to_path: "1.7 C"
+  carry_raw: "132.1"
+  back_spin: "119"
+  total_length: null
+  smash: "1.40"
+  ball_speed: "109.3"
+  peak_height: "38.4"
+  total_spin: "309"
+  face_to_target: "2.2 O"
+  club_speed: "78.0"
+4758-s1-white.png:
+  club_path: "4.3 I-O"
+  carry_game: null
+  face_to_path: "1.2 O"
+  carry_raw: "196.2"
+  back_spin: "3142"
+  total_length: null
+  smash: "1.37"
+  ball_speed: "124.5"
+  peak_height: "107.7"
+  total_spin: "3142"
+  face_to_target: "5.5 O"
+  club_speed: "91.0"
+4758-s2-tinted.png:
+  club_path: "1.4 I-O"
+  carry_game: null
+  face_to_path: "1.1 C"
+  carry_raw: "194.7"
+  back_spin: "3438"
+  total_length: null
+  smash: "1.38"
+  ball_speed: "125.4"
+  peak_height: "96.9"
+  total_spin: "3447"
+  face_to_target: "0.3 O"
+  club_speed: "90.9"
+range.png:
+  club_path: null
+  carry_game: null
+  face_to_path: null
+  carry_raw: null
+  back_spin: null
+  total_length: null
+  smash: null
+  ball_speed: null
+  peak_height: null
+  total_spin: null
+  face_to_target: null
+  club_speed: null
+4758-row-low.png:
+  club_path: null
+  carry_game: null
+  face_to_path: null
+  carry_raw: null
+  back_spin: null
+  total_length: null
+  smash: null
+  ball_speed: null
+  peak_height: null
+  total_spin: null
+  face_to_target: null
+  club_speed: null
+4758-no-labels.png:
+  club_path: null
+  carry_game: null
+  face_to_path: null
+  carry_raw: null
+  back_spin: null
+  total_length: null
+  smash: null
+  ball_speed: null
+  peak_height: null
+  total_spin: null
+  face_to_target: null
+  club_speed: null
+wall.png:
+  club_path: null
+  carry_game: null
+  face_to_path: null
+  carry_raw: null
+  back_spin: null
+  total_length: null
+  smash: null
+  ball_speed: null
+  peak_height: null
+  total_spin: null
+  face_to_target: null
+  club_speed: null
+4758-fragments.png:
+  club_path: "4.3 I-O"
+  carry_game: null
+  face_to_path: "1.2 O"
+  carry_raw: "196.2"
+  back_spin: "3142"
+  total_length: null
+  smash: "1.37"
+  ball_speed: "124.5"
+  peak_height: "107.7"
+  total_spin: "3142"
+  face_to_target: "5.5 O"
+  club_speed: "91.0"
+4758-merged-point.png:
+  club_path: "4.3 I-O"
+  carry_game: null
+  face_to_path: "1.2 O"
+  carry_raw: "196.2"
+  back_spin: "3142"
+  total_length: null
+  smash: "1.37"
+  ball_speed: "124.5"
+  peak_height: "107.7"
+  total_spin: "3142"
+  face_to_target: "5.5 O"
+  club_speed: "91.0"
+4758-vanished-digit.png:
+  club_path: "4.3 I-O"
+  carry_game: null
+  face_to_path: "1.2 O"
+  carry_raw: "196.2"
+  back_spin: "3142"
+  total_length: null
+  smash: "1.37"
+  ball_speed: "124.5"
+  peak_height: "107.7"
+  total_spin: "3142"
+  face_to_target: "5.5 O"
+  club_speed: "91.0"
+4758-lone-read.png:
+  total_spin: "1849"
+4758-stray-mark.png:
+  club_path: "4.3 I-O"
+  carry_game: null
+  face_to_path: "1.2 O"
+  carry_raw: "196.2"
+  back_spin: "3142"
+  total_length: null
+  smash: "1.37"
+  ball_speed: "124.5"
+  peak_height: "107.7"
+  total_spin: "3142"
+  face_to_target: "5.5 O"
+  club_speed: "91.0"

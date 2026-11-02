@@ -7,6 +7,7 @@ from pathlib import Path
 from golf_etl.ball import BallFlight, summary_line
 from golf_etl.detect import Rejected, Swing
 from golf_etl.frames import Timing
+from golf_etl.sim import SimShot
 
 _GUIDE_INTRO = """## How to read this session
 
@@ -33,6 +34,14 @@ or launch monitor its screen shows this shot's numbers (club path, face, speeds,
 Numbers visible in any other frame belong to the previous shot.
 """
 
+_AFTER_SHOT_SIM = """\
+- `07-after-shot.jpg` is a full-resolution frame a few seconds after impact. Its simulator screen \
+shows this shot's numbers, which the Sim table below already has as text: look here for the \
+cells the table leaves blank. Numbers visible in any other frame belong to the previous shot.
+- `sim.json` in each swing folder is that swing's Sim table row with each number's vote count \
+and when it first showed, and `"unchanged": true` when the screen did not change after the swing.
+"""
+
 _DRIVE_CLIP = "- `clip.mp4` is the swing as video.\n"
 
 _POSE = """\
@@ -50,19 +59,21 @@ top is not known and the durations are left blank.
 """
 
 
-def guide(storage: str) -> str:
-    """The reading guide for what the publisher leaves in the session folder."""
+def guide(storage: str, sim: bool = False) -> str:
+    """The reading guide for what the publisher leaves in the session folder; `sim` when the
+    swings have a Sim table row and `sim.json`."""
+    after_shot = _AFTER_SHOT_SIM if sim else _AFTER_SHOT
     if storage == "drive":
         return (
             _GUIDE_INTRO
             + _DRIVE_COPIES
-            + _AFTER_SHOT
+            + after_shot
             + _DRIVE_CLIP
             + _POSE.format(frame="the nearest `clip.mp4` frame", numbers="`clip.mp4` frame numbers")
         )
     return (
         _GUIDE_INTRO
-        + _AFTER_SHOT
+        + after_shot
         + _POSE.format(
             frame="the frame number in the swing",
             numbers="frame numbers counted from 2.5s before impact",
@@ -79,6 +90,29 @@ thresholds. \
 Start dir is sideways over up: negative starts left of the camera line, positive right. \
 A `lost:` track says why the ball could not be followed, and that swing has no grade.
 """
+
+SIM_GUIDE = """\
+The numbers below are read off the simulator screen. A blank cell means the screen was covered \
+or unreadable in most frames; check `07-after-shot.jpg` for those. A row of blanks can also \
+mean the read failed, that the next swing started before this shot's numbers showed, or that \
+the screen did not change after this swing (the simulator did not register a shot; `sim.json` \
+has `"unchanged": true`). In the last two cases `07-after-shot.jpg` shows the previous shot.
+"""
+
+SIM_COLUMNS = {
+    "Club mph": "club_speed",
+    "Ball mph": "ball_speed",
+    "Smash": "smash",
+    "Carry raw yd": "carry_raw",
+    "Carry game yd": "carry_game",
+    "Total yd": "total_length",
+    "Peak ft": "peak_height",
+    "Back spin": "back_spin",
+    "Total spin": "total_spin",
+    "Path": "club_path",
+    "Face to path": "face_to_path",
+    "Face to target": "face_to_target",
+}
 
 
 def session_id(captured: datetime, checksum: str) -> str:
@@ -98,6 +132,8 @@ class SessionSummary:
     balls: list[BallFlight] = field(default_factory=list)  # one per swing, in swing order
     ball_median: float | None = None
     timings: list[Timing] = field(default_factory=list)  # one per swing, in order
+    # one per swing, None when its read failed; empty when the video shows no readout panel
+    sims: list[SimShot | None] = field(default_factory=list)
     storage: str = "github"
 
 
@@ -126,7 +162,8 @@ def write_session_md(path: Path, s: SessionSummary) -> None:
         "",
     ]
     if s.swings and s.balls:
-        lines += [guide(s.storage) + BALL_GUIDE, summary_line(s.balls, s.ball_median), ""]
+        guide_text = guide(s.storage, bool(s.sims))
+        lines += [guide_text + BALL_GUIDE, summary_line(s.balls, s.ball_median), ""]
         lines += [
             "| Swing | Impact | Strength | Hand speed peak "
             "| Ball px/frame | Start dir | Grade | Track |",
@@ -145,7 +182,7 @@ def write_session_md(path: Path, s: SessionSummary) -> None:
             ]
             lines.append("|" + "|".join(f" {c} " if c else " " for c in cells) + "|")
     elif s.swings:
-        lines += [guide(s.storage)]
+        lines += [guide(s.storage, bool(s.sims))]
         lines += ["| Swing | Impact | Strength | Hand speed peak |", "|---|---|---|---|"]
         for n, swing in enumerate(s.swings, 1):
             lines.append(
@@ -154,6 +191,16 @@ def write_session_md(path: Path, s: SessionSummary) -> None:
             )
     else:
         lines.append("No swings detected.")
+    if s.swings and s.sims:
+        lines += ["", "## Sim", "", SIM_GUIDE]
+        lines += [
+            "| Swing | " + " | ".join(SIM_COLUMNS) + " |",
+            "|---" * (len(SIM_COLUMNS) + 1) + "|",
+        ]
+        for n, shot in enumerate(s.sims, 1):
+            values = shot.values if shot else {}
+            cells = [f"swing-{n:02d}"] + [values.get(f) or "" for f in SIM_COLUMNS.values()]
+            lines.append("|" + "|".join(f" {c} " if c else " " for c in cells) + "|")
     if s.swings and s.timings:
         lines += [
             "",
