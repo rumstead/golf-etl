@@ -119,8 +119,14 @@ def read_frames(
     end_s: float,
     long_edge: int | None = None,
     max_fps: float | None = None,
+    step_s: float | None = None,
 ) -> Iterator[tuple[float, np.ndarray]]:
-    """Yield (timestamp_s, rgb_frame) for frames in [start_s, end_s)."""
+    """Yield (timestamp_s, rgb_frame) for frames in [start_s, end_s).
+
+    `max_fps` keeps at most that many frames a second with ffmpeg's fps filter, which can show
+    a frame up to half a step after its timestamp. `step_s` instead yields the first frame at or
+    after each step from `start_s`.
+    """
     start_s = max(0.0, start_s)
     end_s = min(info.duration_s, end_s)
     if end_s <= start_s:
@@ -131,10 +137,15 @@ def read_frames(
         w, h = scaled_size(info.width, info.height, long_edge)
     fps = info.fps if not max_fps or info.fps <= max_fps else max_fps
     filters = _video_filters(info, w, h, "rgb24")
-    if fps != info.fps:
+    out_opts: list[str] = []
+    if step_s and step_s > 1 / info.fps:
+        fps = 1 / step_s
+        filters.insert(0, f"select=gte(t\\,selected_n*{step_s}-0.001)")
+        out_opts = ["-fps_mode", "passthrough"]  # or ffmpeg fills the skipped frames back in
+    elif fps != info.fps:
         filters.insert(0, f"fps={fps}")
     cmd = ["ffmpeg", "-v", "error", "-ss", f"{start_s:.3f}", "-t", f"{end_s - start_s:.3f}"]
-    cmd += ["-i", str(path), "-map", "0:v:0", "-vf", ",".join(filters)]
+    cmd += ["-i", str(path), "-map", "0:v:0", "-vf", ",".join(filters), *out_opts]
     cmd += ["-f", "rawvideo", "-pix_fmt", "rgb24", "-"]
     frame_bytes = w * h * 3
     with (

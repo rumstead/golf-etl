@@ -8,6 +8,7 @@ from golf_etl.sim import (
     COLUMNS,
     DIGIT_HEIGHT,
     FIELDS,
+    MIN_PANEL_READS,
     THRESHOLDS,
     UPSCALE,
     Glyph,
@@ -21,6 +22,7 @@ from golf_etl.sim import (
     build_glyphs,
     counts_settled,
     cut_glyphs,
+    fields_read,
     find_panel,
     pick_panel,
     read_cell,
@@ -401,6 +403,16 @@ def test_read_shot_reads_every_labeled_field_from_repeated_frames(glyphs):
         assert shot.first_seen_s.get(f) == (2.0 if want[f] else None)
 
 
+def test_fields_read_counts_the_cells_with_a_number(glyphs):
+    rgb, _ = load("4761-s1")
+    panel = Panel(PANEL_BOXES["4761-s1"], 0.5)
+    assert fields_read(rgb, panel, glyphs) >= MIN_PANEL_READS
+    for x0, x1, y0, y1 in value_boxes(panel.box):
+        cell = rgb[y0:y1, x0:x1]
+        cell[:] = np.median(cell.reshape(-1, 3), axis=0)
+    assert fields_read(rgb, panel, glyphs) == 0
+
+
 def test_a_screen_that_shows_the_same_numbers_before_impact_reads_blank(glyphs):
     frames, _ = _shot_frames()
     before = [(1.0, frames[0][1]), (1.5, frames[0][1])]
@@ -416,6 +428,23 @@ def test_a_screen_that_shows_another_shot_before_impact_reads_the_new_one(glyphs
     frames, labels = _shot_frames()
     rgb, _ = load("4762-s8")  # another shot's panel, 2 px off the box
     shot = read_shot(frames, Panel(PANEL_BOXES["4761-s1"], 0.5), glyphs, [(1.0, rgb)] * 2)
+    assert not shot.unchanged
+    assert shot.values["club_speed"] == labels["club_speed"]
+
+
+def test_a_screen_that_still_shows_the_previous_swings_numbers_reads_blank(glyphs):
+    # the panel was hidden before impact, so only the previous swing's numbers can tell
+    frames, labels = _shot_frames()
+    previous = {f: labels[f] for f in FIELDS}
+    shot = read_shot(frames, Panel(PANEL_BOXES["4761-s1"], 0.5), glyphs, previous=previous)
+    assert shot.unchanged
+    assert shot.values == dict.fromkeys(FIELDS)
+
+
+def test_a_screen_that_shows_other_numbers_than_the_previous_swing_reads_them(glyphs):
+    frames, labels = _shot_frames()
+    _, other = load("4762-s8")
+    shot = read_shot(frames, Panel(PANEL_BOXES["4761-s1"], 0.5), glyphs, previous=other)
     assert not shot.unchanged
     assert shot.values["club_speed"] == labels["club_speed"]
 

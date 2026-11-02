@@ -1,3 +1,4 @@
+import math
 import subprocess
 from datetime import UTC, datetime
 
@@ -43,6 +44,20 @@ def test_read_frames_caps_fps(video):
     info = media.probe(video)
     frames = list(media.read_frames(video, info, 0.0, 1.0, long_edge=320, max_fps=10))
     assert len(frames) == pytest.approx(10, abs=1)
+
+
+@pytest.mark.parametrize("start", [0.0, 1.0, 2.31])
+def test_read_frames_by_step_shows_the_frame_at_its_time(tmp_path, start):
+    # each frame's brightness is its frame number
+    path = tmp_path / "count.mov"
+    lavfi = "color=black:s=64x64:r=120:d=6,format=gray,geq=lum='mod(N\\,250)'"
+    cmd = ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", lavfi]
+    subprocess.run([*cmd, "-c:v", "libx264", "-qp", "0", "-g", "60", str(path)], check=True)
+    info = media.probe(path)
+    frames = list(media.read_frames(path, info, start, start + 2.0, step_s=0.5))
+    assert [t for t, _ in frames] == pytest.approx([start + k / 2 for k in range(4)])
+    for t, img in frames:
+        assert img[..., 0].mean() == pytest.approx(math.ceil(t * 120 - 1e-6) % 250, abs=1)
 
 
 def test_read_frames_clamps_to_duration(video):

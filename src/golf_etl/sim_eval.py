@@ -30,7 +30,7 @@ from golf_etl.sim import (
     value_boxes,
 )
 
-LABEL_START_S = 3.0  # after impact; the screen switches to the shot 0.25 to 0.5s after it
+LABEL_START_S = 3.0  # after impact; the screen switches to the shot 0.2 to 0.5s after it
 
 
 @dataclass(frozen=True)
@@ -123,7 +123,7 @@ def _shots(labels_path: Path) -> tuple[LabeledShot, ...]:
             _, end = shot_window(impact, info.duration_s, later[0] if later else None, 0.0)
             frames = []
             if end > start:
-                frames = list(read_frames(path, info, start, end, max_fps=SAMPLE_FPS))
+                frames = list(read_frames(path, info, start, end, step_s=1 / SAMPLE_FPS))
             labels = {f: str(text) for f, text in shot.items() if f != "impact"}
             panel = pick_panel([find_panel(frame) for _, frame in frames])
             crops = []

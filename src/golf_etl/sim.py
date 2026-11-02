@@ -106,11 +106,12 @@ MIN_VOTES = 2  # reads a field's winner needs
 LEAD = 2  # the winner needs this many times the runner-up's votes
 PANEL_AGREE_PX = 2  # panels this close on every edge are the same panel
 MIN_PANELS = 3  # agreeing panels needed to trust a box
-# The screen switches to a new shot 0.25 to 0.5s after impact, so up to BEFORE_END_S before impact
+# The screen switches to a new shot 0.2 to 0.5s after impact, so up to BEFORE_END_S before impact
 # it still shows the previous shot, and from BEFORE_START_S before (but at least AFTER_PREVIOUS_S
 # after the previous swing's impact) the previous shot's numbers are up.
 BEFORE_START_S, BEFORE_END_S, AFTER_PREVIOUS_S = 1.5, 0.25, 1.0
 MIN_COMPARED = 4  # fields read before and after impact needed to call the screen unchanged
+MIN_PANEL_READS = 4  # fields a found panel must read in one searched frame to be the readout
 COUNTING = ("carry_game", "total_length")  # fields that count up while the ball flies and rolls
 COUNTS_SETTLE_S = 13.0  # after impact; the roll holds its next-to-last value for about 2.5s
 
@@ -254,15 +255,17 @@ def read_shot(
     glyphs: Glyphs,
     before: Iterable[tuple[float, np.ndarray]] = (),
     settled: bool = True,
+    previous: dict[str, str | None] | None = None,
 ) -> SimShot:
     """Every field read in each (time, RGB frame) and voted across the frames.
 
     Without `settled` (see `counts_settled`) the COUNTING fields are blank: the frames may end
     while they still show a value short of the final one.
 
-    `before` are frames from just before impact. When most fields read there equal the winners,
-    the screen never showed a new shot: a swing the simulator did not register, or no shot at
-    all, still has the previous shot on screen. Every field is then blank and `unchanged` set.
+    `before` are frames from just before impact. When most fields read there, or most of the
+    `previous` swing's values, equal the winners, the screen never showed a new shot: a swing
+    the simulator did not register, or no shot at all, still has the previous shot on screen.
+    Every field is then blank and `unchanged` set. `previous` covers a panel hidden before impact.
     """
     reads = _reads(frames, panel, glyphs)
     values, votes, first_seen = {}, {}, {}
@@ -273,7 +276,8 @@ def read_shot(
         if values[field] is not None:
             first_seen[field] = next(t for t, text in found if text == values[field])
     count = len(reads[FIELDS[0]])
-    if _unchanged(_reads(before, panel, glyphs), values):
+    last = {field: [(0.0, text)] for field, text in (previous or {}).items()}
+    if _unchanged(_reads(before, panel, glyphs), values) or _unchanged(last, values):
         return blank_shot(count, unchanged=True)
     return SimShot(values, votes, count, first_seen)
 
@@ -286,6 +290,11 @@ def blank_shot(frames: int, unchanged: bool = False) -> SimShot:
 def same_panel(a: Panel | None, b: Panel, px: int) -> bool:
     """Whether `a` was found and every edge is within `px` of `b`'s."""
     return a is not None and all(abs(x - y) <= px for x, y in zip(a.box, b.box, strict=True))
+
+
+def fields_read(frame: np.ndarray, panel: Panel, glyphs: Glyphs) -> int:
+    """How many fields read in an RGB frame."""
+    return sum(text is not None for [(_, text)] in _reads([(0.0, frame)], panel, glyphs).values())
 
 
 def _reads(
