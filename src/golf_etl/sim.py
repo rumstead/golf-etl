@@ -106,7 +106,7 @@ MIN_VOTES = 2  # reads a field's winner needs
 LEAD = 2  # the winner needs this many times the runner-up's votes
 PANEL_AGREE_PX = 2  # panels this close on every edge are the same panel
 MIN_PANELS = 3  # agreeing panels needed to trust a box
-# The screen switches to a new shot 0.25 to 0.5s after impact, so up to BEFORE_END_S before impact
+# The screen switches to a new shot 0.2 to 0.5s after impact, so up to BEFORE_END_S before impact
 # it still shows the previous shot, and from BEFORE_START_S before (but at least AFTER_PREVIOUS_S
 # after the previous swing's impact) the previous shot's numbers are up.
 BEFORE_START_S, BEFORE_END_S, AFTER_PREVIOUS_S = 1.5, 0.25, 1.0

@@ -295,10 +295,10 @@ def _write_sim(
     before_start, before_end = before_window(impact_s, previous_impact_s)
     found: list[Panel | None] = []
     try:
-        frames = read_frames(video, info, start, end, None, SAMPLE_FPS) if start < end else []
+        frames = read_frames(video, info, start, end, step_s=1 / SAMPLE_FPS) if start < end else []
         frames = _searched(frames, found)
         before = (
-            read_frames(video, info, before_start, before_end, None, SAMPLE_FPS)
+            read_frames(video, info, before_start, before_end, step_s=1 / SAMPLE_FPS)
             if before_start < before_end
             else []
         )
