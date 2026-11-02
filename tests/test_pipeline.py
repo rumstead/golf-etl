@@ -22,6 +22,7 @@ from golf_etl.pose import (
     RIGHT_FOOT_INDEX,
     RIGHT_HEEL,
 )
+from golf_etl.sim import value_boxes
 from tests.ball_clips import address_pose, make_ball_clip
 from tests.conftest import make_video, make_video_with_clicks
 from tests.poses import swing_track
@@ -274,6 +275,18 @@ def screen_video(tmp_path_factory):
     folder = tmp_path_factory.mktemp("screen")
     stills = [(_screen_still("4762-s8"), 3.0), (_screen_still("4761-s1"), 13.0)]
     return _still_video(folder / "screen.mp4", stills)
+
+
+def test_a_panel_shaped_box_with_no_numbers_writes_no_sim_json(tmp_path, caplog):
+    still = _screen_still("4761-s1")
+    for x0, x1, y0, y1 in value_boxes((1381, 1507, 203, 446)):
+        cell = still[y0:y1, x0:x1]
+        cell[:] = np.median(cell.reshape(-1, 3), axis=0)
+    video = _still_video(tmp_path / "blank.mp4", [(still, 12.0)])
+    with caplog.at_level(logging.INFO, logger="golf_etl.pipeline"):
+        result = _process(video, tmp_path / "out", [1.0])
+    assert not (result.session_dir / "swing-01" / "sim.json").exists()
+    assert "no readout panel: no searched frame reads 4 fields in it" in caplog.text
 
 
 def _sim(session_dir, n):

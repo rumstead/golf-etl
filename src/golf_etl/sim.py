@@ -111,6 +111,7 @@ MIN_PANELS = 3  # agreeing panels needed to trust a box
 # after the previous swing's impact) the previous shot's numbers are up.
 BEFORE_START_S, BEFORE_END_S, AFTER_PREVIOUS_S = 1.5, 0.25, 1.0
 MIN_COMPARED = 4  # fields read before and after impact needed to call the screen unchanged
+MIN_PANEL_READS = 4  # fields a found panel must read in one searched frame to be the readout
 COUNTING = ("carry_game", "total_length")  # fields that count up while the ball flies and rolls
 COUNTS_SETTLE_S = 13.0  # after impact; the roll holds its next-to-last value for about 2.5s
 
@@ -289,6 +290,11 @@ def blank_shot(frames: int, unchanged: bool = False) -> SimShot:
 def same_panel(a: Panel | None, b: Panel, px: int) -> bool:
     """Whether `a` was found and every edge is within `px` of `b`'s."""
     return a is not None and all(abs(x - y) <= px for x, y in zip(a.box, b.box, strict=True))
+
+
+def fields_read(frame: np.ndarray, panel: Panel, glyphs: Glyphs) -> int:
+    """How many fields read in an RGB frame."""
+    return sum(text is not None for [(_, text)] in _reads([(0.0, frame)], panel, glyphs).values())
 
 
 def _reads(

@@ -8,6 +8,7 @@ from golf_etl.sim import (
     COLUMNS,
     DIGIT_HEIGHT,
     FIELDS,
+    MIN_PANEL_READS,
     THRESHOLDS,
     UPSCALE,
     Glyph,
@@ -21,6 +22,7 @@ from golf_etl.sim import (
     build_glyphs,
     counts_settled,
     cut_glyphs,
+    fields_read,
     find_panel,
     pick_panel,
     read_cell,
@@ -399,6 +401,16 @@ def test_read_shot_reads_every_labeled_field_from_repeated_frames(glyphs):
     for f in FIELDS:
         assert shot.votes[f] == (3 if want[f] else 0)
         assert shot.first_seen_s.get(f) == (2.0 if want[f] else None)
+
+
+def test_fields_read_counts_the_cells_with_a_number(glyphs):
+    rgb, _ = load("4761-s1")
+    panel = Panel(PANEL_BOXES["4761-s1"], 0.5)
+    assert fields_read(rgb, panel, glyphs) >= MIN_PANEL_READS
+    for x0, x1, y0, y1 in value_boxes(panel.box):
+        cell = rgb[y0:y1, x0:x1]
+        cell[:] = np.median(cell.reshape(-1, 3), axis=0)
+    assert fields_read(rgb, panel, glyphs) == 0
 
 
 def test_a_screen_that_shows_the_same_numbers_before_impact_reads_blank(glyphs):

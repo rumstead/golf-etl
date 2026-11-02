@@ -30,6 +30,7 @@ from golf_etl.media import VideoInfo, encode_clip, probe, read_audio, read_frame
 from golf_etl.pose import PoseEstimator, write_pose_csv
 from golf_etl.session import SessionSummary, session_id, video_time, write_session_md
 from golf_etl.sim import (
+    MIN_PANEL_READS,
     SAMPLE_FPS,
     Glyphs,
     Panel,
@@ -37,6 +38,7 @@ from golf_etl.sim import (
     before_window,
     blank_shot,
     counts_settled,
+    fields_read,
     find_panel,
     pick_panel,
     read_shot,
@@ -263,20 +265,26 @@ def _find_panel(video: Path, info: VideoInfo, impacts: list[float], cfg: Setting
     """The simulator's readout panel, or None when the video shows none.
 
     One frame is searched at each PANEL_AFTER_S after the first PANEL_SWINGS impacts, when it
-    falls inside that swing's shot window, and the frames must agree on the box.
+    falls inside that swing's shot window, and the frames must agree on the box. The box must
+    also read MIN_PANEL_READS fields in one of those frames, so a panel-shaped box with no
+    numbers is not the readout.
     """
-    found = []
+    images, found = [], []
     for n, impact in enumerate(impacts[:PANEL_SWINGS], 1):
         next_impact = impacts[n] if n < len(impacts) else None
         start, end = shot_window(impact, info.duration_s, next_impact, cfg.pre_impact_s)
         for t in (impact + after for after in PANEL_AFTER_S):
             if start <= t < end:
                 window = list(read_frames(video, info, t, min(t + 1.5 / info.fps, end)))
-                found += [find_panel(img) for _, img in window[:1]]
+                images += [img for _, img in window[:1]]
+    found = [find_panel(img) for img in images]
     panel = pick_panel(found)
     if panel is None:
         matched = sum(p is not None for p in found)
         log.info("no readout panel: %d of %d frames matched", matched, len(found))
+    elif all(fields_read(img, panel, _glyphs()) < MIN_PANEL_READS for img in images):
+        log.info("no readout panel: no searched frame reads %d fields in it", MIN_PANEL_READS)
+        return None
     return panel
 
 
