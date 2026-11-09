@@ -40,12 +40,24 @@ class LabeledShot:
     labels: dict[str, str]  # screen text by field
     panel: Panel | None  # box within each crop, None when the frames agree on no panel
     crops: list[tuple[float, np.ndarray]]  # (time, panel crop) of every frame read
+    glyph_source: bool = True  # False when the video's entry says glyphs: false
+
+
+def sits_out_glyphs(entry: dict) -> bool:
+    """Whether a video's labels entry keeps it out of the glyph build with `glyphs: false`. The
+    video is still scored, so a screen in a different font can be labeled without its glyphs
+    crowding the templates the other videos read with."""
+    value = entry.get("glyphs", True)
+    if not isinstance(value, bool):
+        raise ValueError(f"{entry['path']}: glyphs must be true or false, not {value!r}")
+    return value is False
 
 
 def labeled_cells(labels_path: Path) -> Iterator[tuple[str, np.ndarray, str, str]]:
-    """(video, value cell RGB, field, screen text) for every labeled field in every frame read."""
+    """(video, value cell RGB, field, screen text) for every labeled field in every frame read
+    of the videos that are glyph sources."""
     for shot in _shots(labels_path.resolve()):
-        if shot.panel is None:
+        if shot.panel is None or not shot.glyph_source:
             continue
         boxes = dict(zip(FIELDS, value_boxes(shot.panel.box), strict=True))
         for _, crop in shot.crops:
@@ -96,7 +108,10 @@ def held_out(labels_path: Path) -> Callable[[str], Glyphs]:
     @cache
     def glyphs_for(video: str) -> Glyphs:
         cells = labeled_cells(labels_path)
-        return build_glyphs((cell, text) for v, cell, _, text in cells if v != video)
+        glyphs = build_glyphs((cell, text) for v, cell, _, text in cells if v != video)
+        if not len(glyphs.labels):
+            raise ValueError(f"{video}: no other video to build glyphs from")
+        return glyphs
 
     return glyphs_for
 
@@ -131,5 +146,7 @@ def _shots(labels_path: Path) -> tuple[LabeledShot, ...]:
                 x0, x1, y0, y1 = panel.box
                 crops = [(t, frame[y0:y1, x0:x1].copy()) for t, frame in frames]
                 panel = Panel((0, x1 - x0, 0, y1 - y0), panel.score)
-            shots.append(LabeledShot(entry["path"], impact, labels, panel, crops))
+            shots.append(
+                LabeledShot(entry["path"], impact, labels, panel, crops, not sits_out_glyphs(entry))
+            )
     return tuple(shots)

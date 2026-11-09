@@ -8,6 +8,8 @@ from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 
+import yaml
+
 from golf_etl.config import Settings
 
 log = logging.getLogger("golf_etl")
@@ -75,15 +77,22 @@ def cmd_eval(args, cfg: Settings) -> int:
 
 def cmd_sim_glyphs(args, cfg: Settings) -> int:
     from golf_etl.sim import build_glyphs
-    from golf_etl.sim_eval import labeled_cells
+    from golf_etl.sim_eval import labeled_cells, sits_out_glyphs
 
     glyphs = build_glyphs((cell, text) for _, cell, _, text in labeled_cells(args.labels))
+    if not len(glyphs.labels):
+        print("no labeled cells to build glyphs from", file=sys.stderr)
+        return 1
     glyphs.save(args.out)
     classes = Counter(glyphs.labels.tolist())
     print(
         f"{args.out}: {len(glyphs.labels)} glyphs, "
         + " ".join(f"{c} {n}" for c, n in sorted(classes.items()))
     )
+    entries = yaml.safe_load(args.labels.read_text())["videos"] if args.labels.exists() else []
+    left_out = [entry["path"] for entry in entries if sits_out_glyphs(entry)]
+    if left_out:
+        print("left out of the build (glyphs: false): " + ", ".join(left_out))
     return 0
 
 
@@ -91,11 +100,15 @@ def cmd_eval_sim(args, cfg: Settings) -> int:
     from golf_etl.sim import Glyphs
     from golf_etl.sim_eval import held_out, score
 
-    if args.glyphs:
-        glyphs = Glyphs.load(args.glyphs)
-        _, _, _, lines = score(args.labels, lambda video: glyphs)
-    else:
-        _, _, _, lines = score(args.labels, held_out(args.labels))
+    try:
+        if args.glyphs:
+            glyphs = Glyphs.load(args.glyphs)
+            _, _, _, lines = score(args.labels, lambda video: glyphs)
+        else:
+            _, _, _, lines = score(args.labels, held_out(args.labels))
+    except ValueError as error:  # a video with no other video to build its glyphs from
+        print(error, file=sys.stderr)
+        return 1
     print("\n".join(lines))
     return 0
 
