@@ -95,11 +95,13 @@ Ball px/frame is how fast it leaves the club, in pixels per video frame, so comp
 within this session. Grade compares it to the session median: good is near the median or \
 faster, poor is well under it, fair is between; `ball.json` in each swing folder has the \
 thresholds. \
-On a sim session with at least 3 swings with a smash read, Grade comes from the sim's smash \
-factor against the session median instead (good at 0.97 times the median or more, poor under \
-0.92), a swing without a smash read has no grade, and the summary line says which basis was used. \
+On a sim session where enough swings have a smash read, Grade comes from the sim's smash \
+factor against the session median instead (good near the median or above, poor well under it, \
+with the thresholds in `ball.json`), a swing without a smash read has no grade, and the summary \
+line says which basis was used. \
 Start dir is sideways over up: negative starts left of the camera line, positive right. \
-A `lost:` track says why the ball could not be followed, and that swing has no grade.
+A `lost:` track says why the ball could not be followed; on the px basis that swing has no \
+grade, and on the smash basis its grade still comes from the sim.
 """
 
 SIM_GUIDE = """\

@@ -132,7 +132,7 @@ The ball is the only small object that sits still before impact and leaves its s
 4. **Metrics** from the first chain point and the tenth after it: `ball_px_per_frame` (distance over frames), `start_dir` (sideways over up, negative is left of the camera line), `impact_frame` (the first point) and `rise_px` (first point to last).
 5. **Grade** within the session: good at `GOLF_BALL_GOOD` (0.9) times the median speed of the tracked swings or more, poor under `GOLF_BALL_POOR` (0.78) times it, fair between. Pixels per frame depend on camera distance and frame rate, so speeds are never compared across sessions. On a sim session with at least 3 swings whose smash factor was read (`GOLF_SMASH_MIN_READS`), every grade comes from smash against the session median instead: good at `GOLF_SMASH_GOOD` (0.97) times the median or more, poor under `GOLF_SMASH_POOR` (0.92). A swing without a smash read has no grade, `ball.json` names the basis in `params.basis`, and the summary line says which one was used. On the 2026-11-08 sim session the two strikes the owner called poor graded poor and the last seven graded good. Start direction is reported, not graded, until there is a target line in the picture.
 
-A swing that cannot be followed gets a `lost:` reason and no numbers or grade: `no golfer at address`, `clip under 100fps` (at 30fps the ball is out of frame three frames after impact), `camera moved`, `no ball launched` (no ball, or a practice swing next to one), `ball lost after launch`, `too fast to follow face-on` (the ball was hit, but face-on it crosses a 120fps portrait frame in two or three frames, already a streak in the first), or `tracking error` (logged; the rest of the swing is still written). `swing-NN/ball.json` keeps the metrics, the chain points and the thresholds so a later run can re-grade without decoding video. Tracking takes about 1.5s per swing.
+A swing that cannot be followed gets a `lost:` reason and no numbers, and no grade on the px basis (on the smash basis its grade still comes from the sim): `no golfer at address`, `clip under 100fps` (at 30fps the ball is out of frame three frames after impact), `camera moved`, `no ball launched` (no ball, or a practice swing next to one), `ball lost after launch`, `too fast to follow face-on` (the ball was hit, but face-on it crosses a 120fps portrait frame in two or three frames, already a streak in the first), or `tracking error` (logged; the rest of the swing is still written). `swing-NN/ball.json` keeps the metrics, the chain points, the thresholds and the grade basis so a later run can re-grade without decoding video (on the smash basis together with the smash in `sim.json`). Tracking takes about 1.5s per swing.
 
 On the 2026-10-16 range session (33 clips, 120fps, two camera spots, yellow and white balls) it followed all 26 real shots and gave a lost reason for the 7 that were not shots, and its grades matched the golfer's calls on the six swings he named.
 
@@ -240,9 +240,9 @@ Each swing gets labeled JPEGs decoded from the original video, 2560px long edge 
 
 ### Ball flight grade
 Each swing's ball flight is graded against the session in `session.md`, so a review can rank swings from text alone.
-- **Tracked swing**: the swing's row has ball px/frame, start direction, a grade and `ok`, and `ball.json` has the chain points.
+- **Tracked swing**: the swing's row has ball px/frame, start direction, `ok`, and a grade (on the smash basis, only when its smash was read), and `ball.json` has the chain points.
 - **Yellow dot test**: a synthetic clip with a ball launched at a known speed returns that speed within 5%.
-- **Untracked swing**: the row has a `lost:` reason and empty metric cells, never a guessed grade.
+- **Untracked swing**: the row has a `lost:` reason and empty metric cells, never a guessed grade; on the smash basis it keeps the grade its smash read gives.
 - **Size**: `session.md` stays under 50KB so it reads in one call.
 
 ### Retention
