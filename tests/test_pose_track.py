@@ -50,8 +50,12 @@ def test_pose_csv_has_one_row_per_sample_and_the_named_joints(tmp_path):
     rows = read_csv(path)
     assert len(rows) == len(track.times)
     assert list(rows[0])[:3] == ["time_s", "t_ms", "clip_frame"]
-    for joint in ("nose", "left_shoulder", "right_wrist", "left_hip", "right_knee", "left_heel"):
+    joints = ("nose", "left_shoulder", "left_elbow", "right_elbow", "right_wrist", "left_hip")
+    for joint in (*joints, "right_knee", "left_heel"):
         assert {f"{joint}_x", f"{joint}_y", f"{joint}_vis"} <= set(rows[0])
+    header = list(rows[0])
+    assert header.index("right_shoulder_vis") < header.index("left_elbow_x")
+    assert header.index("right_elbow_vis") < header.index("left_wrist_x")
     assert float(rows[0]["left_wrist_y"]) == pytest.approx(0.6, abs=0.001)
 
 

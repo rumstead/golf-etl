@@ -6,12 +6,15 @@ import os
 from datetime import UTC, datetime
 from pathlib import Path
 
+import numpy as np
 import pytest
 from PIL import Image
 
 from golf_etl.config import Settings
 from golf_etl.eval import detected_impacts, run
-from golf_etl.pipeline import process_video
+from golf_etl.frames import pick_positions
+from golf_etl.media import probe
+from golf_etl.pipeline import detect_video, process_video
 from golf_etl.sim import PANEL_REFERENCE, Glyphs
 from golf_etl.sim_eval import held_out, score
 
@@ -157,3 +160,37 @@ def test_sim_session_matches_the_labels(tmp_path):
                 wrong += read is not None
                 blank += read is None
     assert wrong == 0 and blank <= 1
+
+
+@needs_sim_labels
+def test_takeaway_hands_are_at_the_hips_on_the_labeled_sim_shots():
+    import yaml
+
+    video = LOCAL / "IMG_4859.mov"
+    if not video.exists():
+        pytest.skip("no local/IMG_4859.mov")
+    videos = yaml.safe_load(SIM_LABELS.read_text())["videos"]
+    shots = [float(s["impact"]) for v in videos if v["path"] == video.name for s in v["shots"]]
+    cfg = Settings()
+    detection = detect_video(video, probe(video), cfg)
+    heights = {}
+    for shot in shots:
+        swing = next((s for s in detection.swings if abs(s.impact_s - shot) <= 1.0), None)
+        assert swing is not None, f"no swing within 1s of the shot at {shot}s"
+        p = pick_positions(
+            swing.track,
+            swing.impact_s,
+            cfg.still_speed,
+            cfg.transition_s,
+            cfg.follow_through_s,
+            cfg.takeaway_before_top_s,
+        )
+        i = int(np.argmin(np.abs(swing.track.times - p.takeaway_s)))
+        below = swing.track.hands_below_hips()[i] / swing.track.leg_length()
+        heights[shot] = round(float(below), 3)
+    print(heights)
+    assert len(heights) == len(shots) == 12
+    # The takeaway is the first sample at or above the hip line, so this checks that the rule
+    # fired on every registered shot and that no sample jumped far past the line, not where
+    # the pose put the hips.
+    assert all(-0.15 <= h <= 0.05 for h in heights.values())

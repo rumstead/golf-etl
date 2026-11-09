@@ -14,10 +14,10 @@ _GUIDE_INTRO = """## How to read this session
 - Each `swing-NN/` folder is one swing, in the order hit.
 - Start with `06-sequence.jpg`: the whole swing in one image, read left to right, top row \
 then bottom row: address, takeaway, halfway back, top, transition, impact, follow-through, finish. \
-Takeaway is a fixed short time before the top, about where the club is parallel to the \
-ground, and halfway back is the hands reaching shoulder height, so those panels line up \
-across swings. Transition and follow-through are the same short time before and after \
-impact on every swing.
+Takeaway is the hands reaching hip height going back (a fixed short time before the top \
+when the hips are not in the pose), and halfway back is the hands reaching shoulder height, \
+so those panels line up across swings. Transition and follow-through are the same short time \
+before and after impact on every swing.
 - `05-impact-zoom.jpg` is the ball area at full resolution for the frames just before, at, \
 and after impact, top to bottom. Use it for contact, shaft lean, and strike.
 """
@@ -47,9 +47,9 @@ _DRIVE_CLIP = "- `clip.mp4` is the swing as video.\n"
 _POSE = """\
 - `pose.csv` is the pose estimate as numbers, one row per sample (up to 60 a second): time in \
 the video, ms from impact, {frame}, then x, y and visibility for the nose, \
-shoulders, wrists, hips, knees, and heels. x and y are fractions of the frame width and height \
-from the top left; empty cells mean no pose. Use it to measure hip turn, head movement, and \
-hand height instead of estimating from the images.
+shoulders, elbows, wrists, hips, knees, and heels. x and y are fractions of the frame width \
+and height from the top left; empty cells mean no pose. Use it to measure hip turn, head \
+movement, and hand height instead of estimating from the images.
 - Every image has its position and its time in the video in the top-left corner.
 - The Timing table gives takeaway start (the hands leaving address), top, and impact as \
 {numbers} with their time in the video, plus backswing and downswing time and \

@@ -31,28 +31,52 @@ def test_positions_without_pose_fall_back_to_offsets():
     assert not p.top_in_frame
 
 
-def test_takeaway_is_a_fixed_time_before_the_top():
+def test_takeaway_is_when_the_hands_reach_the_hips():
     p = pick_positions(swing_track(10.0), 10.0, still_speed=0.15)
+    assert p.takeaway_s == pytest.approx(8.9, abs=1 / 60)  # the hips 0.1s after the takeaway start
+
+
+def test_takeaway_falls_back_to_a_fixed_time_before_the_top_without_hips():
+    track = swing_track(10.0)
+    track.landmarks[:, [LEFT_HIP, RIGHT_HIP]] = np.nan
+    p = pick_positions(track, 10.0, still_speed=0.15)
     assert p.takeaway_s == pytest.approx(p.top_s - 0.33)
-    p = pick_positions(swing_track(10.0), 10.0, still_speed=0.15, takeaway_before_top_s=0.5)
+    p = pick_positions(track, 10.0, still_speed=0.15, takeaway_before_top_s=0.5)
     assert p.takeaway_s == pytest.approx(p.top_s - 0.5)
 
 
+def test_takeaway_falls_back_when_the_hands_never_reach_the_hip_line():
+    track = swing_track(10.0)
+    track.landmarks[:, [LEFT_HIP, RIGHT_HIP], 1] = 0.1  # hips above the hands all swing long
+    p = pick_positions(track, 10.0, still_speed=0.15)
+    assert p.takeaway_s == pytest.approx(p.top_s - 0.33)
+
+
 def test_takeaway_is_never_before_the_takeaway_start():
-    p = pick_positions(swing_track(10.0), 10.0, still_speed=0.15, takeaway_before_top_s=2.0)
+    p = pick_positions(swing_track(10.0), 10.0, still_speed=0.15)
+    assert p.takeaway_s >= p.takeaway_start_s
+    track = swing_track(10.0)
+    track.landmarks[:, [LEFT_HIP, RIGHT_HIP]] = np.nan
+    p = pick_positions(track, 10.0, still_speed=0.15, takeaway_before_top_s=2.0)
     assert p.takeaway_s == p.takeaway_start_s
 
 
-def test_takeaway_is_well_into_the_backswing_when_the_hands_address_at_hip_height():
+def _hands_at_hip_height_with_jitter():
     track = swing_track(10.0)
     track.landmarks[:, [LEFT_HIP, RIGHT_HIP], 1] = 0.6  # legs 0.3 long, hands level with hips
     address = track.times - 10.0 <= -1.2
     jitter = np.where(np.arange(address.sum()) % 2 == 0, 0.008, -0.008)
     track.landmarks[address, LEFT_WRIST, 1] += jitter
     track.landmarks[address, RIGHT_WRIST, 1] += jitter
-    p = pick_positions(track, 10.0, still_speed=0.15)
+    return track
+
+
+def test_takeaway_for_hands_addressing_at_hip_height_is_where_they_rise_above_the_hip_line():
+    p = pick_positions(_hands_at_hip_height_with_jitter(), 10.0, still_speed=0.15)
     assert p.takeaway_start_s == pytest.approx(8.8, abs=0.05)
-    assert p.takeaway_s == pytest.approx(9.27, abs=0.03)  # top 9.6
+    # the line sits 0.1 leg lengths (0.03) above address; the hands rise 0.5 a second going back
+    assert p.takeaway_s == pytest.approx(8.86, abs=0.05)
+    assert p.takeaway_s >= p.takeaway_start_s
 
 
 def test_halfway_back_is_when_the_hands_reach_the_shoulders():

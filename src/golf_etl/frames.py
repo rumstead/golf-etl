@@ -20,7 +20,7 @@ TOP_VISIBLE_MIN = 0.5  # wrist visibility below this around the top: the hands w
 class Positions:
     address_s: float  # end of the still stretch at address
     takeaway_start_s: float  # the hands start rising from address
-    takeaway_s: float  # a fixed time before the top
+    takeaway_s: float  # the hands reach the hip line going back
     halfway_s: float  # hands up to the shoulders going back
     top_s: float
     transition_s: float  # a fixed time before impact
@@ -77,14 +77,15 @@ def pick_positions(
     follow_through_s: float = 0.15,
     takeaway_before_top_s: float = 0.33,
 ) -> Positions:
-    """Takeaway is takeaway_before_top_s before the top, never before the takeaway start: the
-    club is about parallel to the ground then from either camera angle. The takeaway start is
-    found looking back from the hands first reaching the hips (and having risen
-    TAKEAWAY_RISE_LEGS from address, for a golfer whose hands address at hip height), and is
-    address without hips in the pose. Halfway back is when the hands reach the shoulders, or
-    without shoulders two thirds of the time from address to top. Transition and
-    follow-through sit transition_s before and follow_through_s after impact, kept between the
-    top and finish."""
+    """Takeaway is the hands first reaching the hip line going back (raised TAKEAWAY_RISE_LEGS
+    above the address hand height, so a golfer whose hands address at hip height still gets a
+    takeaway off address), which lines it up with halfway back across swings. Without hips in
+    the pose, or when the hands never reach the line, it is takeaway_before_top_s before the
+    top. It is never before the takeaway start, which is found looking back from that same
+    moment to where the hands left their address height, and is address when there is no such
+    moment. Halfway back is when the hands reach the shoulders, or without shoulders two thirds
+    of the time from address to top. Transition and follow-through sit transition_s before and
+    follow_through_s after impact, kept between the top and finish."""
     times = track.times
     speed = track.hand_speed()
     height = track.hand_height()
@@ -111,7 +112,8 @@ def pick_positions(
     if at_hips is not None:
         rise = _rise_start(times, below_hips, RISE_EPS_LEGS * track.leg_length(), at_hips)
     takeaway_start_s = address_s if rise is None else rise
-    takeaway_s = max(top_s - takeaway_before_top_s, takeaway_start_s)
+    fallback = top_s - takeaway_before_top_s
+    takeaway_s = max(fallback if at_hips is None else at_hips, takeaway_start_s)
     halfway = _first_above(times, track.hands_below_shoulders(), takeaway_s, top_s)
     halfway_s = max(address_s + 2 * back / 3 if halfway is None else halfway, takeaway_s)
     near_top = (times >= top_s - 0.1) & (times <= min(top_s + 0.3, impact_s - 0.1))
