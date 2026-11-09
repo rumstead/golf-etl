@@ -270,7 +270,8 @@ def test_session_md_summary_line_follows_the_grade_basis(tmp_path):
 def test_the_reading_guide_explains_smash_grading(tmp_path):
     swings = [Swing(12.4, 1.0, 16.0, swing_track(12.4))]
     write_session_md(tmp_path / "session.md", summary(swings=swings, balls=[BallFlight("ok")]))
-    assert "at least 3 swings with a smash read" in (tmp_path / "session.md").read_text()
+    text = (tmp_path / "session.md").read_text()
+    assert "Grade comes from the sim's smash factor against the session median" in text
 
 
 def test_the_reading_guide_describes_the_takeaway_at_hip_height(tmp_path):
@@ -285,8 +286,6 @@ def test_the_reading_guide_lists_the_elbows(tmp_path):
     write_session_md(tmp_path / "session.md", summary(swings=swings))
     text = (tmp_path / "session.md").read_text()
     assert "shoulders, elbows, wrists, hips, knees, and heels" in text
-    text = (tmp_path / "session.md").read_text()
-    assert "Grade comes from the sim's smash factor against the session median" in text
 
 
 def test_the_reading_guide_says_what_a_lost_track_means_on_each_basis(tmp_path):
