@@ -20,6 +20,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from golf_etl.panel import Box, Panel
+
 FIELDS = (
     "club_path",
     "carry_game",
@@ -116,14 +118,6 @@ MIN_COMPARED = 4  # fields read before and after impact needed to call the scree
 MIN_PANEL_READS = 4  # fields a found panel must read in one searched frame to be the readout
 COUNTING = ("carry_game", "total_length")  # fields that count up while the ball flies and rolls
 COUNTS_SETTLE_S = 13.0  # after impact; the roll holds its next-to-last value for about 2.5s
-
-Box = tuple[int, int, int, int]  # x0, x1, y0, y1
-
-
-@dataclass(frozen=True)
-class Panel:
-    box: Box
-    score: float  # TM_CCOEFF_NORMED of the frame's edges against the reference, before settling
 
 
 @dataclass
