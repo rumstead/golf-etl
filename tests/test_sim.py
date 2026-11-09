@@ -19,6 +19,7 @@ from golf_etl.sim import (
     _split,
     _text,
     before_window,
+    blank_shot,
     build_glyphs,
     counts_settled,
     cut_glyphs,
@@ -28,6 +29,7 @@ from golf_etl.sim import (
     read_cell,
     read_shot,
     shot_window,
+    smash_value,
     value_boxes,
     vote,
     write_sim_json,
@@ -565,3 +567,11 @@ def test_pick_panel_keeps_a_drifting_panel():
 
 def test_pick_panel_with_no_panel_is_none():
     assert pick_panel([None, None]) is None
+
+
+def test_smash_value_parses_a_read_and_is_none_for_a_blank_or_missing_shot():
+    read = blank_shot(3)
+    read.values["smash"] = "1.42"
+    assert smash_value(read) == pytest.approx(1.42)
+    assert smash_value(blank_shot(3)) is None
+    assert smash_value(None) is None

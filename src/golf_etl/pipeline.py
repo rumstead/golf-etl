@@ -18,7 +18,7 @@ from golf_etl.ball import (
     REF_FPS,
     BallFlight,
     RestSpot,
-    grade,
+    grade_session,
     on_rest_spot,
     track_ball,
     write_ball_json,
@@ -44,6 +44,7 @@ from golf_etl.sim import (
     read_shot,
     same_panel,
     shot_window,
+    smash_value,
     write_sim_json,
 )
 
@@ -127,14 +128,19 @@ def process_video(
             sims.append(shot)
             if shot is not None and any(shot.values.values()):
                 last_read = shot.values
-    balls, ball_median = grade(balls, cfg.ball_good, cfg.ball_poor)
+    smashes = [smash_value(s) for s in sims] if sims else [None] * len(balls)
+    balls, ball_median, basis = grade_session(balls, smashes, cfg)
+    good, poor = (
+        (cfg.smash_good, cfg.smash_poor) if basis == "sim_smash" else (cfg.ball_good, cfg.ball_poor)
+    )
     for n, flight in enumerate(balls, 1):
         write_ball_json(
             session_dir / f"swing-{n:02d}" / "ball.json",
             flight,
             median=ball_median,
-            good=cfg.ball_good,
-            poor=cfg.ball_poor,
+            good=good,
+            poor=poor,
+            basis=basis,
         )
     write_session_md(
         session_dir / "session.md",
@@ -153,6 +159,7 @@ def process_video(
             sims=sims,
             storage=cfg.storage,
             venue=venue,
+            grade_basis=basis,
         ),
     )
     return SessionResult(sid, session_dir, len(detection.swings), detection.rejected, venue)

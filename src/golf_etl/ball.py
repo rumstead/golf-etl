@@ -13,6 +13,7 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from golf_etl.config import Settings
 from golf_etl.media import VideoInfo, probe, read_frames, scaled_size
 from golf_etl.pose import (
     LEFT_ANKLE,
@@ -241,10 +242,49 @@ def grade(
     return graded, median
 
 
-def summary_line(flights: list[BallFlight], median: float | None) -> str:
+def grade_by_smash(
+    flights: list[BallFlight], smashes: list[float | None], good: float, poor: float
+) -> tuple[list[BallFlight], float | None]:
+    """Grade each swing's sim smash factor against the session median of the read smashes, with
+    the same good and poor fractions as `grade`. A swing with no smash read has no grade, whatever
+    its ball track; a swing with one is graded even when the ball was lost."""
+    read = [s for s in smashes if s is not None]
+    if not read:
+        return [replace(f, grade=None) for f in flights], None
+    median = float(np.median(read))
+
+    def label(smash: float) -> str:
+        return "good" if smash >= good * median else "poor" if smash < poor * median else "fair"
+
+    graded = [
+        replace(f, grade=None if s is None else label(s))
+        for f, s in zip(flights, smashes, strict=True)
+    ]
+    return graded, median
+
+
+def grade_session(
+    flights: list[BallFlight], smashes: list[float | None], cfg: Settings
+) -> tuple[list[BallFlight], float | None, str]:
+    """The session's grades, median and basis: "sim_smash" when at least cfg.smash_min_reads
+    swings have a smash read, otherwise "ball_px" from ball speed."""
+    if sum(s is not None for s in smashes) >= cfg.smash_min_reads:
+        graded, median = grade_by_smash(flights, smashes, cfg.smash_good, cfg.smash_poor)
+        return graded, median, "sim_smash"
+    graded, median = grade(flights, cfg.ball_good, cfg.ball_poor)
+    return graded, median, "ball_px"
+
+
+def summary_line(flights: list[BallFlight], median: float | None, basis: str = "ball_px") -> str:
     counts = {g: sum(f.grade == g for f in flights) for g in ("good", "fair", "poor")}
-    lost = sum(not f.ok for f in flights)
     line = f"Ball flight: {counts['good']} good, {counts['fair']} fair, {counts['poor']} poor"
+    if basis == "sim_smash":
+        ungraded = sum(f.grade is None for f in flights)
+        line += f", {ungraded} ungraded"
+        if median is not None:
+            line += f" (graded by sim smash factor, median {median:.2f})"
+        return line
+    lost = sum(not f.ok for f in flights)
     line += f", {lost} not tracked"
     if median is not None:
         line += f" (median ball speed {median:.1f} px/frame)"
@@ -252,10 +292,16 @@ def summary_line(flights: list[BallFlight], median: float | None) -> str:
 
 
 def write_ball_json(
-    path: Path, flight: BallFlight, *, median: float | None, good: float, poor: float
+    path: Path,
+    flight: BallFlight,
+    *,
+    median: float | None,
+    good: float,
+    poor: float,
+    basis: str = "ball_px",
 ) -> None:
     """The metrics, the chain and what produced them, so a later run can re-grade without
-    decoding video."""
+    decoding video. `basis` says what the grade and median are of: ball px/frame or sim smash."""
     data = {
         "track": flight.track,
         "ball": flight.ball,
@@ -272,6 +318,7 @@ def write_ball_json(
             "session_median": median,
             "good": good,
             "poor": poor,
+            "basis": basis,
         },
     }
     path.write_text(json.dumps(data) + "\n")

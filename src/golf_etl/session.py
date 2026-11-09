@@ -95,6 +95,9 @@ Ball px/frame is how fast it leaves the club, in pixels per video frame, so comp
 within this session. Grade compares it to the session median: good is near the median or \
 faster, poor is well under it, fair is between; `ball.json` in each swing folder has the \
 thresholds. \
+On a sim session with at least 3 swings with a smash read, Grade comes from the sim's smash \
+factor against the session median instead (good at 0.97 times the median or more, poor under \
+0.92), a swing without a smash read has no grade, and the summary line says which basis was used. \
 Start dir is sideways over up: negative starts left of the camera line, positive right. \
 A `lost:` track says why the ball could not be followed, and that swing has no grade.
 """
@@ -144,6 +147,7 @@ class SessionSummary:
     sims: list[SimShot | None] = field(default_factory=list)
     storage: str = "github"
     venue: str = "range"  # "sim" when the readout panel was found in the video
+    grade_basis: str = "ball_px"  # "sim_smash" when the grades come from the sim's smash factor
 
 
 def video_time(t: float) -> str:
@@ -173,7 +177,7 @@ def write_session_md(path: Path, s: SessionSummary) -> None:
     ]
     if s.swings and s.balls:
         guide_text = guide(s.storage, bool(s.sims))
-        lines += [guide_text + BALL_GUIDE, summary_line(s.balls, s.ball_median), ""]
+        lines += [guide_text + BALL_GUIDE, summary_line(s.balls, s.ball_median, s.grade_basis), ""]
         lines += [
             "| Swing | Impact | Strength | Hand speed peak "
             "| Ball px/frame | Start dir | Grade | Track |",
