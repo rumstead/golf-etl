@@ -271,3 +271,17 @@ def test_the_reading_guide_explains_smash_grading(tmp_path):
     swings = [Swing(12.4, 1.0, 16.0, swing_track(12.4))]
     write_session_md(tmp_path / "session.md", summary(swings=swings, balls=[BallFlight("ok")]))
     assert "at least 3 swings with a smash read" in (tmp_path / "session.md").read_text()
+
+
+def test_the_reading_guide_describes_the_takeaway_at_hip_height(tmp_path):
+    swings = [Swing(12.4, 1.0, 16.0, swing_track(12.4))]
+    write_session_md(tmp_path / "session.md", summary(swings=swings))
+    text = (tmp_path / "session.md").read_text()
+    assert "Takeaway is the hands reaching hip height going back" in text
+
+
+def test_the_reading_guide_lists_the_elbows(tmp_path):
+    swings = [Swing(12.4, 1.0, 16.0, swing_track(12.4))]
+    write_session_md(tmp_path / "session.md", summary(swings=swings))
+    text = (tmp_path / "session.md").read_text()
+    assert "shoulders, elbows, wrists, hips, knees, and heels" in text
