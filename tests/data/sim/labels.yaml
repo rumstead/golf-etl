@@ -156,3 +156,16 @@ wall.png:
   total_spin: "3142"
   face_to_target: "5.5 O"
   club_speed: "91.0"
+4859-s13.png:
+  club_path: "4.1 I-O"
+  carry_game: null
+  face_to_path: "2.4 C"
+  carry_raw: "153.7"
+  back_spin: "4707"
+  total_length: null
+  smash: "1.42"
+  ball_speed: "108.1"
+  peak_height: "71.5"
+  total_spin: "4709"
+  face_to_target: "1.7 O"
+  club_speed: "76.3"

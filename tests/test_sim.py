@@ -40,6 +40,7 @@ PANEL_SIZES = {  # (width, height) of the panel in the source video
     "4762-s8": (126, 243),
     "4758-s1-white": (104, 204),
     "4758-s2-tinted": (104, 204),
+    "4859-s13": (125, 241),  # the later sim UI: mixed-case labels, values flush left
 }
 # (x0, x1, y0, y1) where the cell grid of the reference panel lines up with the fixture's cells.
 # The 4762 panel sits 2 to 3 px up and right of the MARGIN box, and the 4758 panel is 107 x 211.
@@ -48,6 +49,7 @@ PANEL_BOXES = {
     "4762-s8": (42, 168, 38, 281),
     "4758-s1-white": (42, 149, 41, 252),
     "4758-s2-tinted": (42, 149, 41, 252),
+    "4859-s13": (40, 165, 40, 281),
 }
 # IMG_4758 frames cut to (1170, 1380, 200, 520) at 119 s and (1190, 1360, 225, 485) at 72 s
 ROW_LOW_BOX = (51, 158, 48, 259)
@@ -98,6 +100,13 @@ def test_reads_every_labeled_cell_of_each_fixture(name, glyphs):
     labeled = [f for f in FIELDS if labels[f]]
     reads = {f: read_cell(cells[f], f, glyphs) for f in labeled}
     assert reads == {f: None if (name, f) in READS_BLANK else labels[f] for f in labeled}
+
+
+def test_a_value_flush_with_the_panels_left_edge_reads(glyphs):
+    # the later sim UI starts the club path value at the panel's edge; a wide leading digit
+    # touching the cell edge must not count as the cell border
+    cells, labels = _cells("4859-s13")
+    assert read_cell(cells["club_path"], "club_path", glyphs) == labels["club_path"]
 
 
 @pytest.mark.parametrize("name", PANEL_SIZES)

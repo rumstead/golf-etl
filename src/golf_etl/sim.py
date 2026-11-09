@@ -36,6 +36,8 @@ FIELDS = (
 )  # panel order: left to right, then top to bottom
 COLUMNS, ROWS = 2, 6
 CELL_INSET_X, CELL_INSET_TOP = 3, 2  # px trimmed off each cell before reading
+LEFT_INSET_X = 1  # px trimmed off the left column's left edge; the later sim UI starts its
+# values nearly flush with the panel's edge
 VALUE_SHARE = 0.72  # top share of a cell that holds the value, the label sits below
 
 UPSCALE = 4
@@ -169,7 +171,7 @@ def value_boxes(panel_box: Box) -> list[Box]:
     boxes = []
     for row in range(ROWS):
         for col in range(COLUMNS):
-            cx0 = x0 + (x1 - x0) * col // COLUMNS + CELL_INSET_X
+            cx0 = x0 + (x1 - x0) * col // COLUMNS + (LEFT_INSET_X if col == 0 else CELL_INSET_X)
             cx1 = x0 + (x1 - x0) * (col + 1) // COLUMNS - CELL_INSET_X
             cy0 = y0 + (y1 - y0) * row // ROWS + CELL_INSET_TOP
             cy1 = y0 + (y1 - y0) * (row + 1) // ROWS
