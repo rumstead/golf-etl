@@ -175,7 +175,8 @@ def test_takeaway_hands_are_at_the_hips_on_the_labeled_sim_shots():
     detection = detect_video(video, probe(video), cfg)
     heights = {}
     for shot in shots:
-        swing = next(s for s in detection.swings if abs(s.impact_s - shot) <= 1.0)
+        swing = next((s for s in detection.swings if abs(s.impact_s - shot) <= 1.0), None)
+        assert swing is not None, f"no swing within 1s of the shot at {shot}s"
         p = pick_positions(
             swing.track,
             swing.impact_s,
@@ -189,7 +190,9 @@ def test_takeaway_hands_are_at_the_hips_on_the_labeled_sim_shots():
         heights[shot] = round(float(below), 3)
     print(heights)
     assert len(heights) == len(shots) == 12
-    # at the hip line going back on every registered shot, never well past it
+    # The takeaway is the first sample at or above the hip line, so this checks that the rule
+    # fired on every registered shot and that no sample jumped far past the line, not where
+    # the pose put the hips.
     assert all(-0.15 <= h <= 0.05 for h in heights.values())
 
 
