@@ -47,7 +47,10 @@ def sits_out_glyphs(entry: dict) -> bool:
     """Whether a video's labels entry keeps it out of the glyph build with `glyphs: false`. The
     video is still scored, so a screen in a different font can be labeled without its glyphs
     crowding the templates the other videos read with."""
-    return entry.get("glyphs", True) is False
+    value = entry.get("glyphs", True)
+    if not isinstance(value, bool):
+        raise ValueError(f"{entry['path']}: glyphs must be true or false, not {value!r}")
+    return value is False
 
 
 def labeled_cells(labels_path: Path) -> Iterator[tuple[str, np.ndarray, str, str]]:
@@ -105,7 +108,10 @@ def held_out(labels_path: Path) -> Callable[[str], Glyphs]:
     @cache
     def glyphs_for(video: str) -> Glyphs:
         cells = labeled_cells(labels_path)
-        return build_glyphs((cell, text) for v, cell, _, text in cells if v != video)
+        glyphs = build_glyphs((cell, text) for v, cell, _, text in cells if v != video)
+        if not len(glyphs.labels):
+            raise ValueError(f"{video}: no other video to build glyphs from")
+        return glyphs
 
     return glyphs_for
 

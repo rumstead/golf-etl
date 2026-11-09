@@ -168,6 +168,16 @@ def test_sim_glyphs_and_eval_sim_are_subcommands(tmp_path, monkeypatch, capsys):
 
     monkeypatch.setattr("golf_etl.sim_eval.score", score)
     assert main(["eval-sim", str(tmp_path / "labels.yaml"), "--glyphs", str(out)]) == 0
-    assert main(["eval-sim", str(tmp_path / "labels.yaml")]) == 0
-    assert used == [len(Glyphs.load(out).labels), 0]  # held out: no other video to learn from
+    assert used == [len(Glyphs.load(out).labels)]
     assert "total: right 1, wrong 0, blank 0" in capsys.readouterr().out
+    # held out, the one video has no other video to build its glyphs from
+    assert main(["eval-sim", str(tmp_path / "labels.yaml")]) == 1
+    assert "a.MOV: no other video to build glyphs from" in capsys.readouterr().err
+
+
+def test_sim_glyphs_with_nothing_to_build_from_writes_no_file(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr("golf_etl.sim_eval.labeled_cells", lambda path: iter(()))
+    out = tmp_path / "glyphs.npz"
+    assert main(["sim-glyphs", str(tmp_path / "labels.yaml"), str(out)]) == 1
+    assert not out.exists()
+    assert "no labeled cells to build glyphs from" in capsys.readouterr().err
