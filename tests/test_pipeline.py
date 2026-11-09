@@ -466,9 +466,49 @@ def test_file_that_is_not_a_video_raises(tmp_path):
 def test_screen_change_check_credits_a_change_to_the_first_candidate(screen_video):
     info = probe(screen_video)
     panel = _find_panel(screen_video, info, [1.0], Settings())
-    check = _screen_change_check(screen_video, info, panel, Settings(), [1.0, 4.0])
+    # the second candidate's before-window still shows 4762, so on its own it looks like a change
+    assert _screen_change_check(screen_video, info, panel, Settings(), [3.2])(3.2) is True
+    check = _screen_change_check(screen_video, info, panel, Settings(), [1.0, 3.2])
     assert check(1.0) is True  # 4762's numbers before, 4761's after
-    assert check(4.0) is False  # the same 4761 numbers the first candidate was credited with
+    assert check(3.2) is False  # the same 4761 numbers the first candidate was credited with
+
+
+def test_screen_change_check_does_not_credit_a_screen_an_unread_candidate_already_showed(
+    screen_video,
+):
+    info = probe(screen_video)
+    panel = _find_panel(screen_video, info, [1.0], Settings())
+    check = _screen_change_check(screen_video, info, panel, Settings(), [0.1, 3.2])
+    assert check(0.1) is None  # nothing before it to compare with; after it the screen is 4761
+    assert check(3.2) is False  # the same 4761 numbers, so not this candidate's change
+
+
+def test_screen_change_check_compares_an_unreadable_before_with_the_last_screen(screen_video):
+    info = probe(screen_video)
+    panel = _find_panel(screen_video, info, [1.0], Settings())
+    check = _screen_change_check(screen_video, info, panel, Settings(), [0.5, 1.2])
+    assert check(0.5) is True
+    assert check(1.2) is False  # its before-window is empty; after it the screen is still 4761
+
+
+def test_process_video_reuses_the_panel_search_the_detector_ran(tmp_path, screen_video, caplog):
+    def detect(video, info, cfg):
+        swings = [Swing(1.0, 1.0, 0.0, swing_track(1.0, fps=30, before=1.0))]
+        return Detection(swings, [], panel=None, panel_searched=True)
+
+    with caplog.at_level(logging.INFO, logger="golf_etl.pipeline"):
+        result = process_video(
+            screen_video,
+            tmp_path / "out",
+            Settings(),
+            source_name=screen_video.name,
+            checksum="0123456789abcdef",
+            uploaded_at=UPLOADED,
+            detect=detect,
+        )
+    assert not (result.session_dir / "swing-01" / "sim.json").exists()
+    assert "no readout panel" not in caplog.text
+    assert result.venue == "range"
 
 
 def test_screen_change_check_that_cannot_decode_falls_back(screen_video, monkeypatch):

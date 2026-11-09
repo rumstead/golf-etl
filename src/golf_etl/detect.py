@@ -118,9 +118,8 @@ def keep_swings(
 
     Candidates closer than onset_min_gap_s to each other form a span (the whole video for a
     short clip, which keeps only the fastest). Within a span, when the sim screen can be
-    checked, every candidate whose screen changed after it is kept, and the rest keep the one
-    with the fastest hands among what the span has not already kept. Without a screen the
-    fastest hands decide.
+    checked, every candidate whose screen changed after it is kept; the rest are kept fastest
+    first when no kept swing is within the gap. Without a screen the fastest hands decide.
     """
     rejected = list(rejected)
     confirmed = sorted(confirmed, key=lambda c: c[0].time_s)
@@ -147,7 +146,8 @@ def keep_swings(
             near = [k for k, _ in span_kept if abs(onset.time_s - k.time_s) < gap]
             if not near:
                 span_kept.append((onset, check))
-            elif short:
+                continue
+            if short:
                 reason = "single-swing clip keeps the fastest"
             elif any(changed.get(k.time_s) for k in near):
                 reason = f"within {gap:g}s of a swing that changed the screen"
@@ -155,8 +155,7 @@ def keep_swings(
                 reason = f"no screen change, within {gap:g}s of a faster swing"
             else:
                 reason = f"within {gap:g}s of a faster swing"
-            if near:
-                rejected.append(Rejected(onset.time_s, onset.strength, reason))
+            rejected.append(Rejected(onset.time_s, onset.strength, reason))
         kept += span_kept
 
     swings = [

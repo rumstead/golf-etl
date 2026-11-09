@@ -224,8 +224,12 @@ def test_the_screen_is_checked_in_time_order_and_only_inside_a_span():
     assert [s.impact_s for s in result.swings] == [10.0, 15.0, 40.0]
 
 
-def test_short_clip_ignores_the_screen_check():
+def test_short_clip_never_asks_the_screen_check():
     track_for = windows(session_track([2.6, 11.0], 14, down_s={11.0: 0.25}))
     onsets = [Onset(2.6, 1.0), Onset(11.0, 0.7)]
-    result = detect_swings(onsets, track_for, 14, CFG, lambda t: True)
+
+    def never(t: float) -> bool | None:
+        pytest.fail(f"the screen was checked at {t}s on a short clip")
+
+    result = detect_swings(onsets, track_for, 14, CFG, never)
     assert [s.impact_s for s in result.swings] == [11.0]

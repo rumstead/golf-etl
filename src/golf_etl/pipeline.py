@@ -37,6 +37,7 @@ from golf_etl.media import VideoInfo, encode_clip, probe, read_audio, read_frame
 from golf_etl.pose import PoseEstimator, write_pose_csv
 from golf_etl.session import SessionSummary, session_id, video_time, write_session_md
 from golf_etl.sim import (
+    MIN_COMPARED,
     MIN_PANEL_READS,
     SAMPLE_FPS,
     START_AFTER_S,
@@ -61,7 +62,7 @@ from golf_etl.sim import (
 
 Detector = Callable[[Path, VideoInfo, Settings], Detection]
 log = logging.getLogger(__name__)
-PANEL_SWINGS = 5  # swings searched for the readout panel
+PANEL_CANDIDATES = 5  # confirmed candidates whose after-frames are searched for the panel
 PANEL_AFTER_S = (3.0, 4.0, 5.0)  # after each impact, when the panel shows that swing's shot
 PANEL_CHECKS = (1, 3)  # of each swing's frames read, searched again for the panel
 # A swing whose panel is farther than this on an edge from the session's box was moved, and its
@@ -121,14 +122,15 @@ def _screen_change_check(
     """A ScreenChanged for the confirmed candidates at `times`, read through `panel`.
 
     A candidate's before-screen is read as the sim's unchanged check reads it, and its
-    after-screen from START_AFTER_S to CHANGE_AFTER_S after it, voted. A change the screen
-    already showed for an earlier candidate is not credited again. Anything that stops the
-    read means the screen cannot tell, so the hand-speed rule decides."""
+    after-screen from START_AFTER_S to CHANGE_AFTER_S after it, voted. A screen an earlier
+    candidate already showed after it is not credited again, and a candidate with nothing
+    readable before it changed the screen only when its after-screen is a new one. Anything
+    that stops the read means the screen cannot tell, so the hand-speed rule decides."""
     times = sorted(times)
-    credited: dict[str, str | None] | None = None  # the after-screen of the last credited change
+    seen: dict[str, str | None] | None = None  # the last after-screen that read enough fields
 
     def check(t: float) -> bool | None:
-        nonlocal credited
+        nonlocal seen
         earlier = [u for u in times if u < t]
         try:
             start, end = before_window(t, earlier[-1] if earlier else None)
@@ -136,15 +138,21 @@ def _screen_change_check(
             before = read_frames(video, info, start, end, step_s=step) if start < end else []
             after_end = min(t + CHANGE_AFTER_S, info.duration_s)
             after = read_frames(video, info, t + START_AFTER_S, after_end, step_s=step)
-            values = read_shot(after, panel, _glyphs()).values
+            # the counting fields are still moving this soon after impact, so they stay out
+            values = read_shot(after, panel, _glyphs(), settled=False).values
             changed = screen_changed(field_reads(before, panel, _glyphs()), values)
         except Exception:
             log.exception("screen check failed at %.2fs", t)
             return None
-        if changed and same_shot(credited, values):
-            return False
-        if changed:
-            credited = values
+        readable = sum(v is not None for v in values.values()) >= MIN_COMPARED
+        if changed is None and readable and seen is not None:
+            # nothing readable before this candidate: a new screen is one the last candidate
+            # did not already show
+            changed = not same_shot(seen, values)
+        elif changed and same_shot(seen, values):
+            changed = False  # an earlier candidate already brought this screen up
+        if readable:
+            seen = values
         return changed
 
     return check
@@ -333,13 +341,14 @@ def _glyphs() -> Glyphs:
 def _find_panel(video: Path, info: VideoInfo, impacts: list[float], cfg: Settings) -> Panel | None:
     """The simulator's readout panel, or None when the video shows none.
 
-    One frame is searched at each PANEL_AFTER_S after the first PANEL_SWINGS impacts, when it
-    falls inside that swing's shot window, and the frames must agree on the box. The box must
+    One frame is searched at each PANEL_AFTER_S after the first PANEL_CANDIDATES times (the
+    confirmed candidates, or the swings for a detector that did not search), when it falls
+    inside that candidate's shot window, and the frames must agree on the box. The box must
     also read MIN_PANEL_READS fields in one of those frames, so a panel-shaped box with no
     numbers is not the readout.
     """
     images, found = [], []
-    for n, impact in enumerate(impacts[:PANEL_SWINGS], 1):
+    for n, impact in enumerate(impacts[:PANEL_CANDIDATES], 1):
         next_impact = impacts[n] if n < len(impacts) else None
         start, end = shot_window(impact, info.duration_s, next_impact, cfg.pre_impact_s)
         for t in (impact + after for after in PANEL_AFTER_S):
