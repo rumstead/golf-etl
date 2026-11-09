@@ -74,8 +74,7 @@ def test_republishing_a_session_replaces_its_folder(pub, remote, tmp_path):
 
 def test_republishing_the_same_files_makes_no_commit(pub, remote, tmp_path):
     s1 = session(tmp_path, "s1")
-    m = marker("abc", "IMG_1.MOV", "test", "sim")
-    assert m["venue"] == "sim"
+    m = marker("abc", "IMG_1.MOV", "test", "range")
     pub.publish(s1, "s1", m)
     pub.publish(s1, "s1", m)
     assert tree(remote) == S1
@@ -99,8 +98,7 @@ def test_publish_only_checks_out_its_own_session(pub, remote, tmp_path):
 
 def test_published_files_reports_sizes_from_the_remote(pub, tmp_path):
     s1 = session(tmp_path, "s1")
-    m = marker("abc", "IMG_1.MOV", "test", "sim")
-    assert m["venue"] == "sim"
+    m = marker("abc", "IMG_1.MOV", "test", "range")
     pub.publish(s1, "s1", m)
     assert pub.published_files("s1") == {
         ".golf-etl.json": len(json.dumps(m, indent=2).encode()),
@@ -120,3 +118,7 @@ def test_a_rejected_push_raises(pub, remote, tmp_path):
         ["git", "--git-dir", str(remote), "rev-parse", "--verify", "main"], capture_output=True
     )
     assert unborn.returncode != 0
+
+
+def test_the_marker_carries_the_venue():
+    assert marker("abc", "IMG_1.MOV", "test", "sim")["venue"] == "sim"

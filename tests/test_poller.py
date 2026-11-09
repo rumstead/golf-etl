@@ -33,7 +33,7 @@ class FakeProcess:
         (swing / "01-address.jpg").write_bytes(b"jpg" + video.read_bytes())
         (swing / "clip.mp4").write_bytes(b"mp4")
         (out_root / sid / "session.md").write_text(f"# Session {sid}\n")
-        return SessionResult(sid, out_root / sid, 1, [])
+        return SessionResult(sid, out_root / sid, 1, [], "sim")
 
 
 @pytest.fixture
@@ -89,7 +89,7 @@ def test_session_folder_has_a_marker_with_the_checksum(env):
     assert marker["sha256"] == process.calls[0]["checksum"]
     assert marker["sourceName"] == "IMG_1.MOV"
     assert marker["pipelineVersion"] == "test"
-    assert marker["venue"] == "range"
+    assert marker["venue"] == "sim"
 
 
 def test_non_video_files_are_left_alone(env):

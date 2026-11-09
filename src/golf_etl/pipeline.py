@@ -65,7 +65,7 @@ class SessionResult:
     session_dir: Path
     swings: int
     rejected: list[Rejected]
-    venue: str = "range"  # "sim" when the readout panel was found in the video
+    venue: str  # "sim" when the readout panel was found in the video, otherwise "range"
 
 
 def detect_video(video: Path, info: VideoInfo, cfg: Settings) -> Detection:

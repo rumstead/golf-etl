@@ -180,6 +180,8 @@ def test_video_without_a_person_writes_a_zero_swing_session(tmp_path):
     assert [r.reason for r in result.rejected] == ["no pose found"]
     assert result.session_id == "2026-10-02-0900-ffff0000"
     assert sorted(p.name for p in result.session_dir.iterdir()) == ["session.md"]
+    assert result.venue == "range"  # no swings, so no panel search ran
+    assert "- Venue: range" in (result.session_dir / "session.md").read_text()
 
 
 def test_video_without_audio_is_a_zero_swing_session(tmp_path):
