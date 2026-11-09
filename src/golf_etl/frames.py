@@ -82,8 +82,8 @@ def pick_positions(
     takeaway off address), which lines it up with halfway back across swings. Without hips in
     the pose, or when the hands never reach the line, it is takeaway_before_top_s before the
     top. It is never before the takeaway start, which is found looking back from that same
-    moment to where the hands left their address height, and is address without hips in the
-    pose. Halfway back is when the hands reach the shoulders, or without shoulders two thirds
+    moment to where the hands left their address height, and is address when there is no such
+    moment. Halfway back is when the hands reach the shoulders, or without shoulders two thirds
     of the time from address to top. Transition and follow-through sit transition_s before and
     follow_through_s after impact, kept between the top and finish."""
     times = track.times

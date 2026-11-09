@@ -45,6 +45,13 @@ def test_takeaway_falls_back_to_a_fixed_time_before_the_top_without_hips():
     assert p.takeaway_s == pytest.approx(p.top_s - 0.5)
 
 
+def test_takeaway_falls_back_when_the_hands_never_reach_the_hip_line():
+    track = swing_track(10.0)
+    track.landmarks[:, [LEFT_HIP, RIGHT_HIP], 1] = 0.1  # hips above the hands all swing long
+    p = pick_positions(track, 10.0, still_speed=0.15)
+    assert p.takeaway_s == pytest.approx(p.top_s - 0.33)
+
+
 def test_takeaway_is_never_before_the_takeaway_start():
     p = pick_positions(swing_track(10.0), 10.0, still_speed=0.15)
     assert p.takeaway_s >= p.takeaway_start_s
