@@ -28,6 +28,7 @@ from golf_etl.sim import (
     pick_panel,
     read_cell,
     read_shot,
+    screen_changed,
     shot_window,
     smash_value,
     value_boxes,
@@ -575,3 +576,13 @@ def test_smash_value_parses_a_read_and_is_none_for_a_blank_or_missing_shot():
     assert smash_value(read) == pytest.approx(1.42)
     assert smash_value(blank_shot(3)) is None
     assert smash_value(None) is None
+
+
+def test_screen_changed_needs_four_compared_fields_and_most_of_them_different():
+    before = {f: [(0.0, "1")] for f in FIELDS[:4]}
+    assert screen_changed(before, {f: "2" for f in FIELDS[:4]}) is True
+    assert screen_changed(before, {f: "1" for f in FIELDS[:4]}) is False
+    half = {**{f: "1" for f in FIELDS[:2]}, **{f: "2" for f in FIELDS[2:4]}}
+    assert screen_changed(before, half) is True  # unchanged needs more than half equal
+    three = {f: [(0.0, "1")] for f in FIELDS[:3]}
+    assert screen_changed(three, {f: "2" for f in FIELDS[:3]}) is None

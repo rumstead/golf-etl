@@ -98,22 +98,28 @@ def session_4859(tmp_path_factory):
     )
 
 
-def _grade_rows(text: str) -> dict[str, str]:
-    """Each swing's Grade cell from the session.md swing table."""
+def _grades_by_impact(text: str) -> dict[float, str]:
+    """Each swing's Grade cell from the session.md swing table, keyed by its impact time."""
     rows = [r for r in text.split("## Sim")[0].splitlines() if r.startswith("| swing-")]
     cells = [[c.strip() for c in r.strip().strip("|").split("|")] for r in rows]
-    return {c[0]: c[6] for c in cells}
+    return {_video_seconds(c[1]): c[6] for c in cells}
+
+
+def _grade_at(grades: dict[float, str], impact: float) -> str:
+    return next(g for t, g in grades.items() if abs(t - impact) <= 1.0)
 
 
 @needs_sim_labels
 def test_the_sim_session_grades_by_smash(session_4859):
     text = (session_4859.session_dir / "session.md").read_text()
     assert "graded by sim smash factor" in text
-    grades = _grade_rows(text)
+    grades = _grades_by_impact(text)
     print(grades)
-    assert grades["swing-01"] == "poor" and grades["swing-08"] == "poor"
-    assert all(grades[f"swing-{n:02d}"] == "good" for n in range(9, 16))
-    assert all(grades[f"swing-{n:02d}"] == "" for n in (2, 5, 6))
+    # the two strikes the owner called poor, then the seven after the hinge change
+    assert _grade_at(grades, 8.47) == "poor" and _grade_at(grades, 230.51) == "poor"
+    good = (260.29, 305.69, 344.31, 382.06, 409.9, 449.11, 484.88)
+    assert all(_grade_at(grades, t) == "good" for t in good)
+    assert _grade_at(grades, 137.02) == ""  # hit a ball the sim did not register
 
 
 def _video_seconds(text: str) -> float:
@@ -194,3 +200,27 @@ def test_takeaway_hands_are_at_the_hips_on_the_labeled_sim_shots():
     # fired on every registered shot and that no sample jumped far past the line, not where
     # the pose put the hips.
     assert all(-0.15 <= h <= 0.05 for h in heights.values())
+
+
+@needs_sim_labels
+def test_the_sim_session_keeps_the_shots_that_changed_the_screen():
+    import yaml
+
+    video = LOCAL / "IMG_4859.mov"
+    if not video.exists():
+        pytest.skip("no local/IMG_4859.mov")
+    videos = yaml.safe_load(SIM_LABELS.read_text())["videos"]
+    shots = [float(s["impact"]) for v in videos if v["path"] == video.name for s in v["shots"]]
+    detection = detect_video(video, probe(video), Settings())
+    impacts = [s.impact_s for s in detection.swings]
+    print(sorted(round(t, 2) for t in impacts))
+    print({round(r.time_s, 1): r.reason for r in detection.rejected})
+
+    def found(t: float) -> bool:
+        return any(abs(impact - t) <= 0.5 for impact in impacts)
+
+    assert all(found(shot) for shot in shots)  # the 12 registered shots stay
+    # registered on the sim, with a faster-handed practice swing within 8s after each
+    assert found(36.07) and found(160.9)
+    # launched no ball right after a real shot; the screen did not change for them
+    assert not found(39.36) and not found(168.5)
