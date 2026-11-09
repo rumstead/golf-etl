@@ -172,3 +172,60 @@ def test_short_clip_keeps_only_the_fastest_swing():
 def test_no_onsets_is_empty_not_an_error():
     result = detect_swings([], lambda start, end: pytest.fail("no tracks needed"), 30, CFG)
     assert result.swings == [] and result.rejected == []
+
+
+def _two_within_the_gap(faster_second: bool = True):
+    down = {15.0: 0.25} if faster_second else None
+    return windows(session_track([10.0, 15.0], 30, down_s=down))
+
+
+def test_keeps_the_swing_that_changed_the_screen_over_faster_hands():
+    changed = {10.0: True, 15.0: False}
+    onsets = [Onset(10.0, 0.9), Onset(15.0, 0.4)]
+    result = detect_swings(onsets, _two_within_the_gap(), 600, CFG, changed.get)
+    assert [s.impact_s for s in result.swings] == [10.0]
+    assert [(r.time_s, r.reason) for r in result.rejected] == [
+        (15.0, "within 8s of a swing that changed the screen")
+    ]
+
+
+def test_keeps_both_swings_when_each_changed_the_screen():
+    onsets = [Onset(10.0, 0.9), Onset(15.0, 0.4)]
+    result = detect_swings(onsets, _two_within_the_gap(False), 600, CFG, lambda t: True)
+    assert [s.impact_s for s in result.swings] == [10.0, 15.0]
+    assert result.rejected == []
+
+
+def test_falls_back_to_hand_speed_when_the_screen_cannot_be_read():
+    onsets = [Onset(10.0, 0.9), Onset(15.0, 0.4)]
+    result = detect_swings(onsets, _two_within_the_gap(), 600, CFG, lambda t: None)
+    assert [s.impact_s for s in result.swings] == [15.0]
+    assert result.rejected[0].reason == "within 8s of a faster swing"
+
+
+def test_no_screen_change_on_either_keeps_the_faster_and_says_so():
+    onsets = [Onset(10.0, 0.9), Onset(15.0, 0.4)]
+    result = detect_swings(onsets, _two_within_the_gap(), 600, CFG, lambda t: False)
+    assert [s.impact_s for s in result.swings] == [15.0]
+    assert result.rejected[0].reason == "no screen change, within 8s of a faster swing"
+
+
+def test_the_screen_is_checked_in_time_order_and_only_inside_a_span():
+    track_for = windows(session_track([10.0, 15.0, 40.0], 60))
+    asked: list[float] = []
+
+    def check(t: float) -> bool | None:
+        asked.append(t)
+        return True
+
+    onsets = [Onset(15.0, 0.9), Onset(10.0, 0.9), Onset(40.0, 0.9)]
+    result = detect_swings(onsets, track_for, 600, CFG, check)
+    assert asked == [10.0, 15.0]
+    assert [s.impact_s for s in result.swings] == [10.0, 15.0, 40.0]
+
+
+def test_short_clip_ignores_the_screen_check():
+    track_for = windows(session_track([2.6, 11.0], 14, down_s={11.0: 0.25}))
+    onsets = [Onset(2.6, 1.0), Onset(11.0, 0.7)]
+    result = detect_swings(onsets, track_for, 14, CFG, lambda t: True)
+    assert [s.impact_s for s in result.swings] == [11.0]

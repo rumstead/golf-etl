@@ -191,3 +191,27 @@ def test_takeaway_hands_are_at_the_hips_on_the_labeled_sim_shots():
     assert len(heights) == len(shots) == 12
     # at the hip line going back on every registered shot, never well past it
     assert all(-0.15 <= h <= 0.05 for h in heights.values())
+
+
+@needs_sim_labels
+def test_the_sim_session_keeps_the_shots_that_changed_the_screen():
+    import yaml
+
+    video = LOCAL / "IMG_4859.mov"
+    if not video.exists():
+        pytest.skip("no local/IMG_4859.mov")
+    videos = yaml.safe_load(SIM_LABELS.read_text())["videos"]
+    shots = [float(s["impact"]) for v in videos if v["path"] == video.name for s in v["shots"]]
+    detection = detect_video(video, probe(video), Settings())
+    impacts = [s.impact_s for s in detection.swings]
+    print(sorted(round(t, 2) for t in impacts))
+    print({round(r.time_s, 1): r.reason for r in detection.rejected})
+
+    def found(t: float) -> bool:
+        return any(abs(impact - t) <= 0.5 for impact in impacts)
+
+    assert all(found(shot) for shot in shots)  # the 12 registered shots stay
+    # registered on the sim, rejected before as within 8s of faster hands
+    assert found(36.07) and found(160.9)
+    # launched no ball right after a real shot; the screen did not change for them
+    assert not found(39.36) and not found(168.5)

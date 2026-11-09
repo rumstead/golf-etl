@@ -13,7 +13,7 @@ from golf_etl.ball import on_rest_spot, track_ball
 from golf_etl.config import Settings
 from golf_etl.detect import Detection, Swing
 from golf_etl.media import probe
-from golf_etl.pipeline import _impact_frames, process_video
+from golf_etl.pipeline import _find_panel, _impact_frames, _screen_change_check, process_video
 from golf_etl.pose import (
     LEFT_ANKLE,
     LEFT_FOOT_INDEX,
@@ -461,3 +461,22 @@ def test_file_that_is_not_a_video_raises(tmp_path):
             checksum="0123456789abcdef",
             uploaded_at=UPLOADED,
         )
+
+
+def test_screen_change_check_credits_a_change_to_the_first_candidate(screen_video):
+    info = probe(screen_video)
+    panel = _find_panel(screen_video, info, [1.0], Settings())
+    check = _screen_change_check(screen_video, info, panel, Settings(), [1.0, 4.0])
+    assert check(1.0) is True  # 4762's numbers before, 4761's after
+    assert check(4.0) is False  # the same 4761 numbers the first candidate was credited with
+
+
+def test_screen_change_check_that_cannot_decode_falls_back(screen_video, monkeypatch):
+    info = probe(screen_video)
+    panel = _find_panel(screen_video, info, [1.0], Settings())
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("decode")
+
+    monkeypatch.setattr("golf_etl.pipeline.read_frames", broken)
+    assert _screen_change_check(screen_video, info, panel, Settings(), [1.0])(1.0) is None
