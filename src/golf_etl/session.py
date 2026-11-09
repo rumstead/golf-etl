@@ -60,8 +60,8 @@ top is not known and the durations are left blank.
 
 _VENUE = """\
 - Venue is sim when the simulator's readout panel was found in the video, otherwise range. \
-Camera setups differ between the two, so compare pose, panels and ball px/frame only with \
-sessions at the same venue.
+Camera setups differ between the two, so compare pose and panels only with sessions at the \
+same venue.
 """
 
 
