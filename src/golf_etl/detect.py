@@ -7,6 +7,7 @@ import numpy as np
 
 from golf_etl.audio import Onset
 from golf_etl.config import Settings
+from golf_etl.panel import Panel
 from golf_etl.pose import PoseTrack
 
 # Pose around each sound covers the confirm window plus this much on each side, so the hand
@@ -18,6 +19,10 @@ CONFIRM_MARGIN_S = 0.2
 HANDS_NEAR_S = 0.02
 
 TrackFor = Callable[[float, float], PoseTrack]  # pose track for [start_s, end_s) of the video
+# Whether the sim screen changed after a confirmed candidate at this time: True or False when
+# the screen could be read on both sides of it, None when it could not. Called in time order,
+# only for candidates that share a span with another.
+ScreenChanged = Callable[[float], bool | None]
 
 
 @dataclass(frozen=True)
@@ -39,6 +44,8 @@ class Rejected:
 class Detection:
     swings: list[Swing]
     rejected: list[Rejected]
+    panel: Panel | None = None  # the sim readout panel found while detecting, when there is one
+    panel_searched: bool = False  # False when the detector did not look for a panel
 
 
 @dataclass(frozen=True)
@@ -80,17 +87,15 @@ def confirm(track: PoseTrack, onset_s: float, cfg: Settings) -> Check:
     return Check((float(track.times[near][i]) - onset_s) * 1000, peak_speed, "")
 
 
-def detect_swings(
-    onsets: list[Onset], track_for: TrackFor, duration_s: float, cfg: Settings
-) -> Detection:
-    """Confirm every sound on a short pose window, then keep the fastest swing within any
-    onset_min_gap_s span (the whole video for a short clip) and pose its full clip window.
+Candidate = tuple[Onset, Check]
 
-    A louder sound never hides a quieter one here: the finish, a club tap, and a strike can
-    all land within a few seconds, and only the pose tells them apart.
-    """
+
+def confirm_candidates(
+    onsets: list[Onset], track_for: TrackFor, cfg: Settings
+) -> tuple[list[Candidate], list[Rejected]]:
+    """Confirm every sound on a short pose window; the rejections carry their reason."""
     rejected: list[Rejected] = []
-    confirmed: list[tuple[Onset, Check]] = []
+    confirmed: list[Candidate] = []
     half = cfg.confirm_window_ms / 1000 + CONFIRM_MARGIN_S
     for onset in onsets:
         check = confirm(track_for(onset.time_s - half, onset.time_s + half), onset.time_s, cfg)
@@ -98,17 +103,60 @@ def detect_swings(
             rejected.append(Rejected(onset.time_s, onset.strength, check.reason))
         else:
             confirmed.append((onset, check))
+    return confirmed, rejected
 
-    if duration_s < cfg.short_clip_s:
-        gap, reason = float("inf"), "single-swing clip keeps the fastest"
-    else:
-        gap, reason = cfg.onset_min_gap_s, f"within {cfg.onset_min_gap_s:g}s of a faster swing"
-    kept: list[tuple[Onset, Check]] = []
-    for onset, check in sorted(confirmed, key=lambda c: c[1].speed, reverse=True):
-        if all(abs(onset.time_s - k.time_s) >= gap for k, _ in kept):
-            kept.append((onset, check))
+
+def keep_swings(
+    confirmed: list[Candidate],
+    rejected: list[Rejected],
+    track_for: TrackFor,
+    duration_s: float,
+    cfg: Settings,
+    screen_changed: ScreenChanged | None = None,
+) -> Detection:
+    """Keep the swings among the confirmed candidates and pose each one's full clip window.
+
+    Candidates closer than onset_min_gap_s to each other form a span (the whole video for a
+    short clip, which keeps only the fastest). Within a span, when the sim screen can be
+    checked, every candidate whose screen changed after it is kept; the rest are kept fastest
+    first when no kept swing is within the gap. Without a screen the fastest hands decide.
+    """
+    rejected = list(rejected)
+    confirmed = sorted(confirmed, key=lambda c: c[0].time_s)
+    gap = cfg.onset_min_gap_s
+    spans: list[list[Candidate]] = []
+    for candidate in confirmed:
+        if spans and candidate[0].time_s - spans[-1][-1][0].time_s < gap:
+            spans[-1].append(candidate)
         else:
+            spans.append([candidate])
+    short = duration_s < cfg.short_clip_s
+    if short:
+        spans, gap = [confirmed] if confirmed else [], float("inf")
+
+    kept: list[Candidate] = []
+    for span in spans:
+        changed: dict[float, bool | None] = {}
+        if len(span) > 1 and screen_changed is not None and not short:
+            changed = {onset.time_s: screen_changed(onset.time_s) for onset, _ in span}
+        span_kept = [c for c in span if changed.get(c[0].time_s)]
+        for onset, check in sorted(span, key=lambda c: c[1].speed, reverse=True):
+            if changed.get(onset.time_s):
+                continue
+            near = [k for k, _ in span_kept if abs(onset.time_s - k.time_s) < gap]
+            if not near:
+                span_kept.append((onset, check))
+                continue
+            if short:
+                reason = "single-swing clip keeps the fastest"
+            elif any(changed.get(k.time_s) for k in near):
+                reason = f"within {gap:g}s of a swing that changed the screen"
+            elif changed.get(onset.time_s) is False:
+                reason = f"no screen change, within {gap:g}s of a faster swing"
+            else:
+                reason = f"within {gap:g}s of a faster swing"
             rejected.append(Rejected(onset.time_s, onset.strength, reason))
+        kept += span_kept
 
     swings = [
         Swing(
@@ -121,3 +169,19 @@ def detect_swings(
     ]
     rejected.sort(key=lambda r: r.time_s)
     return Detection(swings, rejected)
+
+
+def detect_swings(
+    onsets: list[Onset],
+    track_for: TrackFor,
+    duration_s: float,
+    cfg: Settings,
+    screen_changed: ScreenChanged | None = None,
+) -> Detection:
+    """Confirm every sound, then keep the swings (see keep_swings).
+
+    A louder sound never hides a quieter one here: the finish, a club tap, and a strike can
+    all land within a few seconds, and only the pose tells them apart.
+    """
+    confirmed, rejected = confirm_candidates(onsets, track_for, cfg)
+    return keep_swings(confirmed, rejected, track_for, duration_s, cfg, screen_changed)

@@ -3,7 +3,7 @@
 import logging
 from collections import deque
 from collections.abc import Callable, Iterable, Iterator
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime
 from functools import cache
 from importlib.resources import as_file, files
@@ -18,38 +18,51 @@ from golf_etl.ball import (
     REF_FPS,
     BallFlight,
     RestSpot,
-    grade,
+    grade_session,
     on_rest_spot,
     track_ball,
     write_ball_json,
 )
 from golf_etl.config import Settings
-from golf_etl.detect import Detection, Rejected, Swing, detect_swings
+from golf_etl.detect import (
+    Detection,
+    Rejected,
+    ScreenChanged,
+    Swing,
+    confirm_candidates,
+    keep_swings,
+)
 from golf_etl.frames import Timing, after_shot_time, pick_positions, sharpest, swing_timing
 from golf_etl.media import VideoInfo, encode_clip, probe, read_audio, read_frames
 from golf_etl.pose import PoseEstimator, write_pose_csv
 from golf_etl.session import SessionSummary, session_id, video_time, write_session_md
 from golf_etl.sim import (
+    MIN_COMPARED,
     MIN_PANEL_READS,
     SAMPLE_FPS,
+    START_AFTER_S,
     Glyphs,
     Panel,
     SimShot,
     before_window,
     blank_shot,
     counts_settled,
+    field_reads,
     fields_read,
     find_panel,
     pick_panel,
     read_shot,
     same_panel,
+    same_shot,
+    screen_changed,
     shot_window,
+    smash_value,
     write_sim_json,
 )
 
 Detector = Callable[[Path, VideoInfo, Settings], Detection]
 log = logging.getLogger(__name__)
-PANEL_SWINGS = 5  # swings searched for the readout panel
+PANEL_CANDIDATES = 5  # confirmed candidates whose after-frames are searched for the panel
 PANEL_AFTER_S = (3.0, 4.0, 5.0)  # after each impact, when the panel shows that swing's shot
 PANEL_CHECKS = (1, 3)  # of each swing's frames read, searched again for the panel
 # A swing whose panel is farther than this on an edge from the session's box was moved, and its
@@ -57,6 +70,7 @@ PANEL_CHECKS = (1, 3)  # of each swing's frames read, searched again for the pan
 # (the first wrong read is 6px diagonal), IMG_4457 drifts 3px over its session, and a camera bump
 # that moves the panel a row moves it about 40px.
 PANEL_MOVED_PX = 5
+CHANGE_AFTER_S = 5.0  # the screen check reads from START_AFTER_S to this long after a candidate
 
 
 @dataclass(frozen=True)
@@ -85,7 +99,63 @@ def detect_video(video: Path, info: VideoInfo, cfg: Settings) -> Detection:
         frames = read_frames(video, info, start_s, end_s, cfg.pose_long_edge, cfg.pose_max_fps)
         return estimator.track(frames)
 
-    return detect_swings(onsets, track_for, info.duration_s, cfg)
+    confirmed, rejected = confirm_candidates(onsets, track_for, cfg)
+    times = [onset.time_s for onset, _ in confirmed]
+    panel = _panel_or_none(video, info, times, cfg)
+    check = _screen_change_check(video, info, panel, cfg, times) if panel is not None else None
+    detection = keep_swings(confirmed, rejected, track_for, info.duration_s, cfg, check)
+    return replace(detection, panel=panel, panel_searched=True)
+
+
+def _panel_or_none(video: Path, info: VideoInfo, times: list[float], cfg: Settings) -> Panel | None:
+    try:
+        return _find_panel(video, info, times, cfg)
+    except Exception:
+        # a panel search bug costs the session its sim numbers, not the rest of the session
+        log.exception("readout panel search failed")
+        return None
+
+
+def _screen_change_check(
+    video: Path, info: VideoInfo, panel: Panel, cfg: Settings, times: list[float]
+) -> ScreenChanged:
+    """A ScreenChanged for the confirmed candidates at `times`, read through `panel`.
+
+    A candidate's before-screen is read as the sim's unchanged check reads it, and its
+    after-screen from START_AFTER_S to CHANGE_AFTER_S after it, voted. A screen an earlier
+    candidate already showed after it is not credited again, and a candidate with nothing
+    readable before it changed the screen only when its after-screen is a new one. Anything
+    that stops the read means the screen cannot tell, so the hand-speed rule decides."""
+    times = sorted(times)
+    seen: dict[str, str | None] | None = None  # the last after-screen that read enough fields
+
+    def check(t: float) -> bool | None:
+        nonlocal seen
+        earlier = [u for u in times if u < t]
+        try:
+            start, end = before_window(t, earlier[-1] if earlier else None)
+            step = 1 / SAMPLE_FPS
+            before = read_frames(video, info, start, end, step_s=step) if start < end else []
+            after_end = min(t + CHANGE_AFTER_S, info.duration_s)
+            after = read_frames(video, info, t + START_AFTER_S, after_end, step_s=step)
+            # the counting fields are still moving this soon after impact, so they stay out
+            values = read_shot(after, panel, _glyphs(), settled=False).values
+            changed = screen_changed(field_reads(before, panel, _glyphs()), values)
+        except Exception:
+            log.exception("screen check failed at %.2fs", t)
+            return None
+        readable = sum(v is not None for v in values.values()) >= MIN_COMPARED
+        if changed is None and readable and seen is not None:
+            # nothing readable before this candidate: a new screen is one the last candidate
+            # did not already show
+            changed = not same_shot(seen, values)
+        elif changed and same_shot(seen, values):
+            changed = False  # an earlier candidate already brought this screen up
+        if readable:
+            seen = values
+        return changed
+
+    return check
 
 
 def process_video(
@@ -106,12 +176,10 @@ def process_video(
     session_dir = out_root / sid
     session_dir.mkdir(parents=True, exist_ok=True)
     impacts = [s.impact_s for s in detection.swings]
-    try:
-        panel = _find_panel(video, info, impacts, cfg)
-    except Exception:
-        # a panel search bug costs the session its sim numbers, not the rest of the session
-        log.exception("readout panel search failed")
-        panel = None
+    if detection.panel_searched:
+        panel = detection.panel
+    else:
+        panel = _panel_or_none(video, info, impacts, cfg)
     venue = "sim" if panel is not None else "range"
     balls, timings, sims = [], [], []
     last_read: dict[str, str | None] | None = None  # the latest swing the screen gave numbers for
@@ -127,14 +195,19 @@ def process_video(
             sims.append(shot)
             if shot is not None and any(shot.values.values()):
                 last_read = shot.values
-    balls, ball_median = grade(balls, cfg.ball_good, cfg.ball_poor)
+    smashes = [smash_value(s) for s in sims] if sims else [None] * len(balls)
+    balls, ball_median, basis = grade_session(balls, smashes, cfg)
+    good, poor = (
+        (cfg.smash_good, cfg.smash_poor) if basis == "sim_smash" else (cfg.ball_good, cfg.ball_poor)
+    )
     for n, flight in enumerate(balls, 1):
         write_ball_json(
             session_dir / f"swing-{n:02d}" / "ball.json",
             flight,
             median=ball_median,
-            good=cfg.ball_good,
-            poor=cfg.ball_poor,
+            good=good,
+            poor=poor,
+            basis=basis,
         )
     write_session_md(
         session_dir / "session.md",
@@ -153,6 +226,7 @@ def process_video(
             sims=sims,
             storage=cfg.storage,
             venue=venue,
+            grade_basis=basis,
         ),
     )
     return SessionResult(sid, session_dir, len(detection.swings), detection.rejected, venue)
@@ -267,13 +341,14 @@ def _glyphs() -> Glyphs:
 def _find_panel(video: Path, info: VideoInfo, impacts: list[float], cfg: Settings) -> Panel | None:
     """The simulator's readout panel, or None when the video shows none.
 
-    One frame is searched at each PANEL_AFTER_S after the first PANEL_SWINGS impacts, when it
-    falls inside that swing's shot window, and the frames must agree on the box. The box must
+    One frame is searched at each PANEL_AFTER_S after the first PANEL_CANDIDATES times (the
+    confirmed candidates, or the swings for a detector that did not search), when it falls
+    inside that candidate's shot window, and the frames must agree on the box. The box must
     also read MIN_PANEL_READS fields in one of those frames, so a panel-shaped box with no
     numbers is not the readout.
     """
     images, found = [], []
-    for n, impact in enumerate(impacts[:PANEL_SWINGS], 1):
+    for n, impact in enumerate(impacts[:PANEL_CANDIDATES], 1):
         next_impact = impacts[n] if n < len(impacts) else None
         start, end = shot_window(impact, info.duration_s, next_impact, cfg.pre_impact_s)
         for t in (impact + after for after in PANEL_AFTER_S):

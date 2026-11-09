@@ -251,3 +251,47 @@ def test_the_reading_guide_explains_the_venue(tmp_path):
     write_session_md(tmp_path / "session.md", summary(swings=swings, venue="sim"))
     text = (tmp_path / "session.md").read_text()
     assert "Venue is sim when the simulator's readout panel was found in the video" in text
+
+
+def test_session_md_summary_line_follows_the_grade_basis(tmp_path):
+    swings = [Swing(12.4, 1.0, 16.0, swing_track(12.4)), Swing(40.0, 0.9, 10.0, None)]
+    lost = BallFlight("lost: ball lost after launch", grade="poor")
+    balls = [BallFlight("ok", grade="good"), lost]
+    write_session_md(
+        tmp_path / "session.md",
+        summary(swings=swings, balls=balls, ball_median=1.35, grade_basis="sim_smash"),
+    )
+    text = (tmp_path / "session.md").read_text()
+    assert "Ball flight: 1 good, 0 fair, 1 poor, 0 ungraded" in text
+    assert "(graded by sim smash factor, median 1.35)" in text
+    assert "| poor | lost: ball lost after launch |" in text
+
+
+def test_the_reading_guide_explains_smash_grading(tmp_path):
+    swings = [Swing(12.4, 1.0, 16.0, swing_track(12.4))]
+    write_session_md(tmp_path / "session.md", summary(swings=swings, balls=[BallFlight("ok")]))
+    text = (tmp_path / "session.md").read_text()
+    assert "Grade comes from the sim's smash factor against the session median" in text
+
+
+def test_the_reading_guide_describes_the_takeaway_at_hip_height(tmp_path):
+    swings = [Swing(12.4, 1.0, 16.0, swing_track(12.4))]
+    write_session_md(tmp_path / "session.md", summary(swings=swings))
+    text = (tmp_path / "session.md").read_text()
+    assert "Takeaway is the hands reaching hip height going back" in text
+
+
+def test_the_reading_guide_lists_the_elbows(tmp_path):
+    swings = [Swing(12.4, 1.0, 16.0, swing_track(12.4))]
+    write_session_md(tmp_path / "session.md", summary(swings=swings))
+    text = (tmp_path / "session.md").read_text()
+    assert "shoulders, elbows, wrists, hips, knees, and heels" in text
+
+
+def test_the_reading_guide_says_what_a_lost_track_means_on_each_basis(tmp_path):
+    swings = [Swing(12.4, 1.0, 16.0, swing_track(12.4))]
+    write_session_md(tmp_path / "session.md", summary(swings=swings, balls=[BallFlight("ok")]))
+    text = (tmp_path / "session.md").read_text()
+    assert "followed, and that swing has no grade" not in text
+    assert "on the px basis that swing has no grade" in text
+    assert "on the smash basis its grade still comes from the sim" in text

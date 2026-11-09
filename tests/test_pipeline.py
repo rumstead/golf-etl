@@ -13,7 +13,7 @@ from golf_etl.ball import on_rest_spot, track_ball
 from golf_etl.config import Settings
 from golf_etl.detect import Detection, Swing
 from golf_etl.media import probe
-from golf_etl.pipeline import _impact_frames, process_video
+from golf_etl.pipeline import _find_panel, _impact_frames, _screen_change_check, process_video
 from golf_etl.pose import (
     LEFT_ANKLE,
     LEFT_FOOT_INDEX,
@@ -295,6 +295,13 @@ def _sim(session_dir, n):
     return json.loads((session_dir / f"swing-{n:02d}" / "sim.json").read_text())
 
 
+def test_a_sim_session_with_too_few_smash_reads_grades_by_ball_speed(tmp_path, screen_video):
+    result = _process(screen_video, tmp_path / "out", [1.0])
+    params = json.loads((result.session_dir / "swing-01" / "ball.json").read_text())["params"]
+    assert params["basis"] == "ball_px" and params["good"] == 0.9
+    assert "graded by sim smash factor" not in (result.session_dir / "session.md").read_text()
+
+
 def test_a_video_with_a_screen_is_a_sim_session(tmp_path, screen_video):
     result = _process(screen_video, tmp_path / "out", [1.0])
     assert result.venue == "sim"
@@ -454,3 +461,62 @@ def test_file_that_is_not_a_video_raises(tmp_path):
             checksum="0123456789abcdef",
             uploaded_at=UPLOADED,
         )
+
+
+def test_screen_change_check_credits_a_change_to_the_first_candidate(screen_video):
+    info = probe(screen_video)
+    panel = _find_panel(screen_video, info, [1.0], Settings())
+    # the second candidate's before-window still shows 4762, so on its own it looks like a change
+    assert _screen_change_check(screen_video, info, panel, Settings(), [3.2])(3.2) is True
+    check = _screen_change_check(screen_video, info, panel, Settings(), [1.0, 3.2])
+    assert check(1.0) is True  # 4762's numbers before, 4761's after
+    assert check(3.2) is False  # the same 4761 numbers the first candidate was credited with
+
+
+def test_screen_change_check_does_not_credit_a_screen_an_unread_candidate_already_showed(
+    screen_video,
+):
+    info = probe(screen_video)
+    panel = _find_panel(screen_video, info, [1.0], Settings())
+    check = _screen_change_check(screen_video, info, panel, Settings(), [0.1, 3.2])
+    assert check(0.1) is None  # nothing before it to compare with; after it the screen is 4761
+    assert check(3.2) is False  # the same 4761 numbers, so not this candidate's change
+
+
+def test_screen_change_check_compares_an_unreadable_before_with_the_last_screen(screen_video):
+    info = probe(screen_video)
+    panel = _find_panel(screen_video, info, [1.0], Settings())
+    check = _screen_change_check(screen_video, info, panel, Settings(), [0.5, 1.2])
+    assert check(0.5) is True
+    assert check(1.2) is False  # its before-window is empty; after it the screen is still 4761
+
+
+def test_process_video_reuses_the_panel_search_the_detector_ran(tmp_path, screen_video, caplog):
+    def detect(video, info, cfg):
+        swings = [Swing(1.0, 1.0, 0.0, swing_track(1.0, fps=30, before=1.0))]
+        return Detection(swings, [], panel=None, panel_searched=True)
+
+    with caplog.at_level(logging.INFO, logger="golf_etl.pipeline"):
+        result = process_video(
+            screen_video,
+            tmp_path / "out",
+            Settings(),
+            source_name=screen_video.name,
+            checksum="0123456789abcdef",
+            uploaded_at=UPLOADED,
+            detect=detect,
+        )
+    assert not (result.session_dir / "swing-01" / "sim.json").exists()
+    assert "no readout panel" not in caplog.text
+    assert result.venue == "range"
+
+
+def test_screen_change_check_that_cannot_decode_falls_back(screen_video, monkeypatch):
+    info = probe(screen_video)
+    panel = _find_panel(screen_video, info, [1.0], Settings())
+
+    def broken(*args, **kwargs):
+        raise RuntimeError("decode")
+
+    monkeypatch.setattr("golf_etl.pipeline.read_frames", broken)
+    assert _screen_change_check(screen_video, info, panel, Settings(), [1.0])(1.0) is None

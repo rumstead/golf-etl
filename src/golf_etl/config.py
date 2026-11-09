@@ -28,7 +28,8 @@ class Settings:
     post_impact_s: float = 1.5
     after_shot_s: float = 8.0  # simulators show the shot's final numbers by about 8s
     still_speed: float = 0.15
-    takeaway_before_top_s: float = 0.33  # the takeaway panel, this long before the top
+    # the takeaway panel this long before the top, when the hands never reach the hip line
+    takeaway_before_top_s: float = 0.33
     transition_s: float = 0.1  # the transition panel, this long before impact
     follow_through_s: float = 0.15  # the follow-through panel, this long after impact
     sharpness_radius: int = 2
@@ -43,6 +44,11 @@ class Settings:
     # ball flight grade, as fractions of the session's median ball speed
     ball_good: float = 0.9
     ball_poor: float = 0.78
+    # strike grade on a sim session, as fractions of the session's median smash factor; a
+    # session with at least smash_min_reads smash reads grades by smash instead of ball speed
+    smash_good: float = 0.97
+    smash_poor: float = 0.92
+    smash_min_reads: int = 3
     # storage: remote is the inbox and sessions in drive mode, inbox_root the inbox in github mode
     storage: str = "github"
     inbox_root: str = "/data"

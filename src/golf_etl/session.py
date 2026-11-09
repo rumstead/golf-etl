@@ -14,10 +14,10 @@ _GUIDE_INTRO = """## How to read this session
 - Each `swing-NN/` folder is one swing, in the order hit.
 - Start with `06-sequence.jpg`: the whole swing in one image, read left to right, top row \
 then bottom row: address, takeaway, halfway back, top, transition, impact, follow-through, finish. \
-Takeaway is a fixed short time before the top, about where the club is parallel to the \
-ground, and halfway back is the hands reaching shoulder height, so those panels line up \
-across swings. Transition and follow-through are the same short time before and after \
-impact on every swing.
+Takeaway is the hands reaching hip height going back (a fixed short time before the top \
+when the hips are not in the pose), and halfway back is the hands reaching shoulder height, \
+so those panels line up across swings. Transition and follow-through are the same short time \
+before and after impact on every swing.
 - `05-impact-zoom.jpg` is the ball area at full resolution for the frames just before, at, \
 and after impact, top to bottom. Use it for contact, shaft lean, and strike.
 """
@@ -47,9 +47,9 @@ _DRIVE_CLIP = "- `clip.mp4` is the swing as video.\n"
 _POSE = """\
 - `pose.csv` is the pose estimate as numbers, one row per sample (up to 60 a second): time in \
 the video, ms from impact, {frame}, then x, y and visibility for the nose, \
-shoulders, wrists, hips, knees, and heels. x and y are fractions of the frame width and height \
-from the top left; empty cells mean no pose. Use it to measure hip turn, head movement, and \
-hand height instead of estimating from the images.
+shoulders, elbows, wrists, hips, knees, and heels. x and y are fractions of the frame width \
+and height from the top left; empty cells mean no pose. Use it to measure hip turn, head \
+movement, and hand height instead of estimating from the images.
 - Every image has its position and its time in the video in the top-left corner.
 - The Timing table gives takeaway start (the hands leaving address), top, and impact as \
 {numbers} with their time in the video, plus backswing and downswing time and \
@@ -95,8 +95,13 @@ Ball px/frame is how fast it leaves the club, in pixels per video frame, so comp
 within this session. Grade compares it to the session median: good is near the median or \
 faster, poor is well under it, fair is between; `ball.json` in each swing folder has the \
 thresholds. \
+On a sim session where enough swings have a smash read, Grade comes from the sim's smash \
+factor against the session median instead (good near the median or above, poor well under it, \
+with the thresholds in `ball.json`), a swing without a smash read has no grade, and the summary \
+line says which basis was used. \
 Start dir is sideways over up: negative starts left of the camera line, positive right. \
-A `lost:` track says why the ball could not be followed, and that swing has no grade.
+A `lost:` track says why the ball could not be followed; on the px basis that swing has no \
+grade, and on the smash basis its grade still comes from the sim.
 """
 
 SIM_GUIDE = """\
@@ -144,6 +149,7 @@ class SessionSummary:
     sims: list[SimShot | None] = field(default_factory=list)
     storage: str = "github"
     venue: str = "range"  # "sim" when the readout panel was found in the video
+    grade_basis: str = "ball_px"  # "sim_smash" when the grades come from the sim's smash factor
 
 
 def video_time(t: float) -> str:
@@ -173,7 +179,7 @@ def write_session_md(path: Path, s: SessionSummary) -> None:
     ]
     if s.swings and s.balls:
         guide_text = guide(s.storage, bool(s.sims))
-        lines += [guide_text + BALL_GUIDE, summary_line(s.balls, s.ball_median), ""]
+        lines += [guide_text + BALL_GUIDE, summary_line(s.balls, s.ball_median, s.grade_basis), ""]
         lines += [
             "| Swing | Impact | Strength | Hand speed peak "
             "| Ball px/frame | Start dir | Grade | Track |",

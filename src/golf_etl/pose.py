@@ -10,6 +10,7 @@ import numpy as np
 from mediapipe.tasks.python import BaseOptions, vision
 
 LEFT_SHOULDER, RIGHT_SHOULDER = 11, 12
+LEFT_ELBOW, RIGHT_ELBOW = 13, 14
 LEFT_WRIST, RIGHT_WRIST = 15, 16
 LEFT_HIP, RIGHT_HIP = 23, 24
 LEFT_ANKLE, RIGHT_ANKLE = 27, 28
@@ -22,6 +23,8 @@ CSV_JOINTS = {
     "nose": 0,
     "left_shoulder": 11,
     "right_shoulder": 12,
+    "left_elbow": LEFT_ELBOW,
+    "right_elbow": RIGHT_ELBOW,
     "left_wrist": LEFT_WRIST,
     "right_wrist": RIGHT_WRIST,
     "left_hip": LEFT_HIP,

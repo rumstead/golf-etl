@@ -20,6 +20,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
+from golf_etl.panel import Box, Panel
+
 FIELDS = (
     "club_path",
     "carry_game",
@@ -116,14 +118,6 @@ MIN_COMPARED = 4  # fields read before and after impact needed to call the scree
 MIN_PANEL_READS = 4  # fields a found panel must read in one searched frame to be the readout
 COUNTING = ("carry_game", "total_length")  # fields that count up while the ball flies and rolls
 COUNTS_SETTLE_S = 13.0  # after impact; the roll holds its next-to-last value for about 2.5s
-
-Box = tuple[int, int, int, int]  # x0, x1, y0, y1
-
-
-@dataclass(frozen=True)
-class Panel:
-    box: Box
-    score: float  # TM_CCOEFF_NORMED of the frame's edges against the reference, before settling
 
 
 @dataclass
@@ -269,7 +263,7 @@ def read_shot(
     the simulator did not register, or no shot at all, still has the previous shot on screen.
     Every field is then blank and `unchanged` set. `previous` covers a panel hidden before impact.
     """
-    reads = _reads(frames, panel, glyphs)
+    reads = field_reads(frames, panel, glyphs)
     values, votes, first_seen = {}, {}, {}
     for field, found in reads.items():
         values[field], votes[field] = vote([text for _, text in found])
@@ -278,10 +272,15 @@ def read_shot(
         if values[field] is not None:
             first_seen[field] = next(t for t, text in found if text == values[field])
     count = len(reads[FIELDS[0]])
-    last = {field: [(0.0, text)] for field, text in (previous or {}).items()}
-    if _unchanged(_reads(before, panel, glyphs), values) or _unchanged(last, values):
+    if _unchanged(field_reads(before, panel, glyphs), values) or same_shot(previous, values):
         return blank_shot(count, unchanged=True)
     return SimShot(values, votes, count, first_seen)
+
+
+def smash_value(shot: SimShot | None) -> float | None:
+    """The shot's smash factor as a number, None when the shot or its smash was not read."""
+    text = shot.values.get("smash") if shot is not None else None
+    return float(text) if text else None
 
 
 def blank_shot(frames: int, unchanged: bool = False) -> SimShot:
@@ -296,10 +295,11 @@ def same_panel(a: Panel | None, b: Panel, px: int) -> bool:
 
 def fields_read(frame: np.ndarray, panel: Panel, glyphs: Glyphs) -> int:
     """How many fields read in an RGB frame."""
-    return sum(text is not None for [(_, text)] in _reads([(0.0, frame)], panel, glyphs).values())
+    reads = field_reads([(0.0, frame)], panel, glyphs)
+    return sum(text is not None for [(_, text)] in reads.values())
 
 
-def _reads(
+def field_reads(
     frames: Iterable[tuple[float, np.ndarray]], panel: Panel, glyphs: Glyphs
 ) -> dict[str, list[tuple[float, str | None]]]:
     """Each field's (time, text) in every frame."""
@@ -333,6 +333,24 @@ def _unchanged(
     """Whether at least MIN_COMPARED fields compare and more than half of them are equal."""
     compared, equal = compare_before(before, values)
     return compared >= MIN_COMPARED and equal * 2 > compared
+
+
+def same_shot(previous: dict[str, str | None] | None, values: dict[str, str | None]) -> bool:
+    """Whether `values` show the shot `previous` already showed: at least MIN_COMPARED fields
+    read in both and more than half of them equal. False without a previous shot."""
+    last = {field: [(0.0, text)] for field, text in (previous or {}).items()}
+    return _unchanged(last, values)
+
+
+def screen_changed(
+    before: dict[str, list[tuple[float, str | None]]], values: dict[str, str | None]
+) -> bool | None:
+    """Whether the screen shows a new shot: at least MIN_COMPARED fields compare and at most
+    half of them are equal. None when too few fields compare to tell."""
+    compared, equal = compare_before(before, values)
+    if compared < MIN_COMPARED:
+        return None
+    return equal * 2 <= compared
 
 
 def write_sim_json(path: Path, shot: SimShot, panel: Panel) -> None:
