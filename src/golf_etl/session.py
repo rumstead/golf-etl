@@ -58,6 +58,12 @@ top is not known and the durations are left blank.
 - The skeleton lines on the sequence sheet are a pose estimate; trust the photo over the lines.
 """
 
+_VENUE = """\
+- Venue is sim when the simulator's readout panel was found in the video, otherwise range. \
+Camera setups differ between the two, so compare pose, panels and ball px/frame only with \
+sessions at the same venue.
+"""
+
 
 def guide(storage: str, sim: bool = False) -> str:
     """The reading guide for what the publisher leaves in the session folder; `sim` when the
@@ -70,6 +76,7 @@ def guide(storage: str, sim: bool = False) -> str:
             + after_shot
             + _DRIVE_CLIP
             + _POSE.format(frame="the nearest `clip.mp4` frame", numbers="`clip.mp4` frame numbers")
+            + _VENUE
         )
     return (
         _GUIDE_INTRO
@@ -78,6 +85,7 @@ def guide(storage: str, sim: bool = False) -> str:
             frame="the frame number in the swing",
             numbers="frame numbers counted from 2.5s before impact",
         )
+        + _VENUE
     )
 
 
@@ -135,6 +143,7 @@ class SessionSummary:
     # one per swing, None when its read failed; empty when the video shows no readout panel
     sims: list[SimShot | None] = field(default_factory=list)
     storage: str = "github"
+    venue: str = "range"  # "sim" when the readout panel was found in the video
 
 
 def video_time(t: float) -> str:
@@ -159,6 +168,7 @@ def write_session_md(path: Path, s: SessionSummary) -> None:
         f"- Checksum: {s.checksum}",
         f"- Pipeline: {s.version}",
         f"- Swings: {len(s.swings)}",
+        f"- Venue: {s.venue}",
         "",
     ]
     if s.swings and s.balls:

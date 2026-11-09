@@ -233,3 +233,21 @@ def test_drive_session_md_keeps_the_drive_guide(tmp_path):
     write_session_md(tmp_path / "session.md", _guide_summary("drive"))
     text = (tmp_path / "session.md").read_text()
     assert "06-sequence-small.jpg" in text and "`clip.mp4` is the swing as video." in text
+
+
+def test_session_md_names_the_venue(tmp_path):
+    write_session_md(tmp_path / "session.md", summary(venue="sim"))
+    lines = (tmp_path / "session.md").read_text().splitlines()
+    assert lines.index("- Venue: sim") == lines.index("- Swings: 0") + 1
+
+
+def test_session_md_with_no_swings_is_a_range_session(tmp_path):
+    write_session_md(tmp_path / "session.md", summary())
+    assert "- Venue: range" in (tmp_path / "session.md").read_text()
+
+
+def test_the_reading_guide_explains_the_venue(tmp_path):
+    swings = [Swing(12.4, 1.0, 16.0, swing_track(12.4))]
+    write_session_md(tmp_path / "session.md", summary(swings=swings, venue="sim"))
+    text = (tmp_path / "session.md").read_text()
+    assert "Venue is sim when the simulator's readout panel was found in the video" in text

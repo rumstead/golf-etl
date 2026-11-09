@@ -18,12 +18,13 @@ class Publisher(Protocol):
         ...
 
 
-def marker(checksum: str, source_name: str, version: str) -> dict:
+def marker(checksum: str, source_name: str, version: str, venue: str) -> dict:
     return {
         "sha256": checksum,
         "sourceName": source_name,
         "pipelineVersion": version,
         "published": datetime.now(UTC).isoformat(),
+        "venue": venue,
     }
 
 

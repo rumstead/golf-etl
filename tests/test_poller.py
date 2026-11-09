@@ -89,6 +89,7 @@ def test_session_folder_has_a_marker_with_the_checksum(env):
     assert marker["sha256"] == process.calls[0]["checksum"]
     assert marker["sourceName"] == "IMG_1.MOV"
     assert marker["pipelineVersion"] == "test"
+    assert marker["venue"] == "range"
 
 
 def test_non_video_files_are_left_alone(env):

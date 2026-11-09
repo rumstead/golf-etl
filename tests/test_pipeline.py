@@ -293,6 +293,19 @@ def _sim(session_dir, n):
     return json.loads((session_dir / f"swing-{n:02d}" / "sim.json").read_text())
 
 
+def test_a_video_with_a_screen_is_a_sim_session(tmp_path, screen_video):
+    result = _process(screen_video, tmp_path / "out", [1.0])
+    assert result.venue == "sim"
+    assert "- Venue: sim" in (result.session_dir / "session.md").read_text()
+
+
+def test_a_video_without_a_screen_is_a_range_session(tmp_path):
+    video = make_video_with_clicks(tmp_path / "range.mp4", [1.0], seconds=8.0, size="640x360")
+    result = _process(video, tmp_path / "out", [1.0])
+    assert result.venue == "range"
+    assert "- Venue: range" in (result.session_dir / "session.md").read_text()
+
+
 def test_a_video_with_a_screen_writes_sim_json(tmp_path, screen_video):
     result = _process(screen_video, tmp_path / "out", [1.0])
     sim = _sim(result.session_dir, 1)
