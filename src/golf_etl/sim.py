@@ -284,6 +284,12 @@ def read_shot(
     return SimShot(values, votes, count, first_seen)
 
 
+def smash_value(shot: SimShot | None) -> float | None:
+    """The shot's smash factor as a number, None when the shot or its smash was not read."""
+    text = shot.values.get("smash") if shot is not None else None
+    return float(text) if text else None
+
+
 def blank_shot(frames: int, unchanged: bool = False) -> SimShot:
     """A shot read from `frames` frames with every field blank."""
     return SimShot(dict.fromkeys(FIELDS), dict.fromkeys(FIELDS, 0), frames, {}, unchanged)

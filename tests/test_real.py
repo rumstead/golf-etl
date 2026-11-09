@@ -79,6 +79,40 @@ def test_committed_sim_glyphs_read_labeled_fields_with_no_wrong_number():
     assert wrong == 0 and blank <= 2
 
 
+@pytest.fixture(scope="module")
+def session_4859(tmp_path_factory):
+    """The 2026-11-08 sim session (IMG_4859.mov) processed once for the tests that read it."""
+    video = LOCAL / "IMG_4859.mov"
+    if not video.exists():
+        pytest.skip("no local/IMG_4859.mov")
+    return process_video(
+        video,
+        tmp_path_factory.mktemp("4859"),
+        Settings(),
+        source_name=video.name,
+        checksum="86c76b86",
+        uploaded_at=datetime.now(UTC),
+    )
+
+
+def _grade_rows(text: str) -> dict[str, str]:
+    """Each swing's Grade cell from the session.md swing table."""
+    rows = [r for r in text.split("## Sim")[0].splitlines() if r.startswith("| swing-")]
+    cells = [[c.strip() for c in r.strip().strip("|").split("|")] for r in rows]
+    return {c[0]: c[6] for c in cells}
+
+
+@needs_sim_labels
+def test_the_sim_session_grades_by_smash(session_4859):
+    text = (session_4859.session_dir / "session.md").read_text()
+    assert "graded by sim smash factor" in text
+    grades = _grade_rows(text)
+    print(grades)
+    assert grades["swing-01"] == "poor" and grades["swing-08"] == "poor"
+    assert all(grades[f"swing-{n:02d}"] == "good" for n in range(9, 16))
+    assert all(grades[f"swing-{n:02d}"] == "" for n in (2, 5, 6))
+
+
 def _video_seconds(text: str) -> float:
     """Seconds from a video time as session.md shows it: 24.45s or 1:05.8."""
     minutes, _, seconds = text.removesuffix("s").rpartition(":")

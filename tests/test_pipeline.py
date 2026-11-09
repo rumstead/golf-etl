@@ -295,6 +295,13 @@ def _sim(session_dir, n):
     return json.loads((session_dir / f"swing-{n:02d}" / "sim.json").read_text())
 
 
+def test_a_sim_session_with_too_few_smash_reads_grades_by_ball_speed(tmp_path, screen_video):
+    result = _process(screen_video, tmp_path / "out", [1.0])
+    params = json.loads((result.session_dir / "swing-01" / "ball.json").read_text())["params"]
+    assert params["basis"] == "ball_px" and params["good"] == 0.9
+    assert "graded by sim smash factor" not in (result.session_dir / "session.md").read_text()
+
+
 def test_a_video_with_a_screen_is_a_sim_session(tmp_path, screen_video):
     result = _process(screen_video, tmp_path / "out", [1.0])
     assert result.venue == "sim"

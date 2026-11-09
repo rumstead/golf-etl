@@ -43,6 +43,11 @@ class Settings:
     # ball flight grade, as fractions of the session's median ball speed
     ball_good: float = 0.9
     ball_poor: float = 0.78
+    # strike grade on a sim session, as fractions of the session's median smash factor; a
+    # session with at least smash_min_reads smash reads grades by smash instead of ball speed
+    smash_good: float = 0.97
+    smash_poor: float = 0.92
+    smash_min_reads: int = 3
     # storage: remote is the inbox and sessions in drive mode, inbox_root the inbox in github mode
     storage: str = "github"
     inbox_root: str = "/data"
