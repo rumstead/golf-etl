@@ -65,6 +65,7 @@ class SessionResult:
     session_dir: Path
     swings: int
     rejected: list[Rejected]
+    venue: str  # "sim" when the readout panel was found in the video, otherwise "range"
 
 
 def detect_video(video: Path, info: VideoInfo, cfg: Settings) -> Detection:
@@ -111,6 +112,7 @@ def process_video(
         # a panel search bug costs the session its sim numbers, not the rest of the session
         log.exception("readout panel search failed")
         panel = None
+    venue = "sim" if panel is not None else "range"
     balls, timings, sims = [], [], []
     last_read: dict[str, str | None] | None = None  # the latest swing the screen gave numbers for
     for n, swing in enumerate(detection.swings, 1):
@@ -150,9 +152,10 @@ def process_video(
             timings=timings,
             sims=sims,
             storage=cfg.storage,
+            venue=venue,
         ),
     )
-    return SessionResult(sid, session_dir, len(detection.swings), detection.rejected)
+    return SessionResult(sid, session_dir, len(detection.swings), detection.rejected, venue)
 
 
 def write_swing(

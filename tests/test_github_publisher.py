@@ -42,13 +42,13 @@ def commits(remote) -> int:
 
 
 def test_first_publish_to_an_empty_repo_creates_main(pub, remote, tmp_path):
-    pub.publish(session(tmp_path, "s1"), "s1", marker("abc", "IMG_1.MOV", "test"))
+    pub.publish(session(tmp_path, "s1"), "s1", marker("abc", "IMG_1.MOV", "test", "range"))
     assert tree(remote) == S1
 
 
 def test_clips_and_small_copies_are_not_published(pub, remote, tmp_path):
-    pub.publish(session(tmp_path, "s1"), "s1", marker("abc", "IMG_1.MOV", "test"))
-    pub.publish(session(tmp_path, "s2"), "s2", marker("def", "IMG_2.MOV", "test"))
+    pub.publish(session(tmp_path, "s1"), "s1", marker("abc", "IMG_1.MOV", "test", "range"))
+    pub.publish(session(tmp_path, "s2"), "s2", marker("def", "IMG_2.MOV", "test", "range"))
     assert tree(remote) == S1 | S2
     names = {p.rsplit("/", 1)[1] for p in tree(remote)}
     assert "clip.mp4" not in names
@@ -56,25 +56,25 @@ def test_clips_and_small_copies_are_not_published(pub, remote, tmp_path):
 
 
 def test_second_session_keeps_the_first(pub, remote, tmp_path):
-    pub.publish(session(tmp_path, "s1"), "s1", marker("abc", "IMG_1.MOV", "test"))
-    pub.publish(session(tmp_path, "s2"), "s2", marker("def", "IMG_2.MOV", "test"))
+    pub.publish(session(tmp_path, "s1"), "s1", marker("abc", "IMG_1.MOV", "test", "range"))
+    pub.publish(session(tmp_path, "s2"), "s2", marker("def", "IMG_2.MOV", "test", "range"))
     assert tree(remote) == S1 | S2
     assert commits(remote) == 2
 
 
 def test_republishing_a_session_replaces_its_folder(pub, remote, tmp_path):
     s1 = session(tmp_path, "s1")
-    pub.publish(s1, "s1", marker("abc", "IMG_1.MOV", "test"))
-    pub.publish(session(tmp_path, "s2"), "s2", marker("def", "IMG_2.MOV", "test"))
+    pub.publish(s1, "s1", marker("abc", "IMG_1.MOV", "test", "range"))
+    pub.publish(session(tmp_path, "s2"), "s2", marker("def", "IMG_2.MOV", "test", "range"))
     (s1 / "swing-01" / "pose.csv").unlink()
-    pub.publish(s1, "s1", marker("abc", "IMG_1.MOV", "test"))
+    pub.publish(s1, "s1", marker("abc", "IMG_1.MOV", "test", "range"))
     assert tree(remote) == (S1 - {"sessions/s1/swing-01/pose.csv"}) | S2
     assert commits(remote) == 3
 
 
 def test_republishing_the_same_files_makes_no_commit(pub, remote, tmp_path):
     s1 = session(tmp_path, "s1")
-    m = marker("abc", "IMG_1.MOV", "test")
+    m = marker("abc", "IMG_1.MOV", "test", "range")
     pub.publish(s1, "s1", m)
     pub.publish(s1, "s1", m)
     assert tree(remote) == S1
@@ -82,9 +82,9 @@ def test_republishing_the_same_files_makes_no_commit(pub, remote, tmp_path):
 
 
 def test_publish_only_checks_out_its_own_session(pub, remote, tmp_path):
-    pub.publish(session(tmp_path, "s1"), "s1", marker("abc", "IMG_1.MOV", "test"))
-    pub.publish(session(tmp_path, "s2"), "s2", marker("def", "IMG_2.MOV", "test"))
-    pub.publish(session(tmp_path, "s3"), "s3", marker("ghi", "IMG_3.MOV", "test"))
+    pub.publish(session(tmp_path, "s1"), "s1", marker("abc", "IMG_1.MOV", "test", "range"))
+    pub.publish(session(tmp_path, "s2"), "s2", marker("def", "IMG_2.MOV", "test", "range"))
+    pub.publish(session(tmp_path, "s3"), "s3", marker("ghi", "IMG_3.MOV", "test", "range"))
     work = tmp_path / "work"
     assert {p.name for p in (work / "sessions").iterdir()} == {"s3"}
     assert git("-C", str(work), "rev-parse", "--is-shallow-repository").strip() == "true"
@@ -98,7 +98,7 @@ def test_publish_only_checks_out_its_own_session(pub, remote, tmp_path):
 
 def test_published_files_reports_sizes_from_the_remote(pub, tmp_path):
     s1 = session(tmp_path, "s1")
-    m = marker("abc", "IMG_1.MOV", "test")
+    m = marker("abc", "IMG_1.MOV", "test", "range")
     pub.publish(s1, "s1", m)
     assert pub.published_files("s1") == {
         ".golf-etl.json": len(json.dumps(m, indent=2).encode()),
@@ -113,8 +113,12 @@ def test_a_rejected_push_raises(pub, remote, tmp_path):
     hook.write_text("#!/bin/sh\nexit 1\n")
     hook.chmod(0o755)
     with pytest.raises(RuntimeError, match="push"):
-        pub.publish(session(tmp_path, "s1"), "s1", marker("abc", "IMG_1.MOV", "test"))
+        pub.publish(session(tmp_path, "s1"), "s1", marker("abc", "IMG_1.MOV", "test", "range"))
     unborn = subprocess.run(
         ["git", "--git-dir", str(remote), "rev-parse", "--verify", "main"], capture_output=True
     )
     assert unborn.returncode != 0
+
+
+def test_the_marker_carries_the_venue():
+    assert marker("abc", "IMG_1.MOV", "test", "sim")["venue"] == "sim"

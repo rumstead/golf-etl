@@ -180,6 +180,8 @@ def test_video_without_a_person_writes_a_zero_swing_session(tmp_path):
     assert [r.reason for r in result.rejected] == ["no pose found"]
     assert result.session_id == "2026-10-02-0900-ffff0000"
     assert sorted(p.name for p in result.session_dir.iterdir()) == ["session.md"]
+    assert result.venue == "range"  # no swings, so no panel search ran
+    assert "- Venue: range" in (result.session_dir / "session.md").read_text()
 
 
 def test_video_without_audio_is_a_zero_swing_session(tmp_path):
@@ -291,6 +293,19 @@ def test_a_panel_shaped_box_with_no_numbers_writes_no_sim_json(tmp_path, caplog)
 
 def _sim(session_dir, n):
     return json.loads((session_dir / f"swing-{n:02d}" / "sim.json").read_text())
+
+
+def test_a_video_with_a_screen_is_a_sim_session(tmp_path, screen_video):
+    result = _process(screen_video, tmp_path / "out", [1.0])
+    assert result.venue == "sim"
+    assert "- Venue: sim" in (result.session_dir / "session.md").read_text()
+
+
+def test_a_video_without_a_screen_is_a_range_session(tmp_path):
+    video = make_video_with_clicks(tmp_path / "range.mp4", [1.0], seconds=8.0, size="640x360")
+    result = _process(video, tmp_path / "out", [1.0])
+    assert result.venue == "range"
+    assert "- Venue: range" in (result.session_dir / "session.md").read_text()
 
 
 def test_a_video_with_a_screen_writes_sim_json(tmp_path, screen_video):

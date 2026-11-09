@@ -109,7 +109,9 @@ class Poller:
                 duplicates=duplicates,
             )
             self.publisher.publish(
-                result.session_dir, result.session_id, marker(checksum, video.name, self.version)
+                result.session_dir,
+                result.session_id,
+                marker(checksum, video.name, self.version, result.venue),
             )
             self.inbox.delete(claimed)
         except Exception:
