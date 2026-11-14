@@ -78,10 +78,11 @@ def test_committed_sim_glyphs_read_labeled_fields_with_no_wrong_number():
     glyphs = Glyphs.load(GLYPHS)
     right, wrong, blank, lines = score(SIM_LABELS, lambda video: glyphs)
     print("\n".join(lines))
-    # IMG_4762's carry 178.8 at 61.1s and spin 2284 at 101.3s read in only a frame or two, and
+    # IMG_4762's carry 178.8 at 61.1s and spin 2284 at 101.3s read in only a frame or two,
     # IMG_4859's newer font leaves back spin at 8.47s, ball speed at 230.51s and carry at
-    # 305.69s blank with the older font's glyphs
-    assert wrong == 0 and blank <= 5
+    # 305.69s blank with the older font's glyphs, and at 484.88s the golfer's arm reaches into
+    # the club speed cell
+    assert wrong == 0 and blank <= 6
 
 
 @pytest.fixture(scope="module")
