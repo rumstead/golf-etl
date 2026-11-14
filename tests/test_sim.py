@@ -9,6 +9,7 @@ from golf_etl.sim import (
     DIGIT_HEIGHT,
     FIELDS,
     MIN_PANEL_READS,
+    PANEL_REFERENCE,
     THRESHOLDS,
     UPSCALE,
     Glyph,
@@ -313,6 +314,15 @@ def test_finds_the_panel_when_the_best_coarse_hit_is_two_rows_high():
     assert panel is not None
     errors = [a - b for a, b in zip(panel.box, ROWS_HIGH_BOX, strict=True)]
     assert all(abs(e) <= 2 for e in errors), (panel.box, errors)
+
+
+def test_committed_glyphs_read_the_club_path_through_the_found_box_of_the_wider_layout():
+    glyphs = Glyphs.load(PANEL_REFERENCE.with_name("sim_glyphs.npz"))
+    rgb, _ = load("4877-rows-high")
+    panel = find_panel(rgb)
+    assert panel is not None
+    x0, x1, y0, y1 = value_boxes(panel.box)[FIELDS.index("club_path")]
+    assert read_cell(rgb[y0:y1, x0:x1], "club_path", glyphs) == "1.1 I-O"
 
 
 def test_finds_the_panel_when_the_labels_are_hidden():

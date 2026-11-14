@@ -38,6 +38,8 @@ FIELDS = (
 )  # panel order: left to right, then top to bottom
 COLUMNS, ROWS = 2, 6
 CELL_INSET_X, CELL_INSET_TOP = 3, 2  # px trimmed off each cell before reading
+LEFT_INSET_X = 1  # px trimmed off the left column's left edge; the box can start a few px
+# inside the panel's edge, close to a wide left-column value
 VALUE_SHARE = 0.72  # top share of a cell that holds the value, the label sits below
 
 UPSCALE = 4
@@ -103,7 +105,7 @@ ASPECTS = np.round(np.arange(-0.05, 0.201, 0.01), 2)
 ROI_MARGIN = 0.4
 LABEL_BAND = (0.6, 0.86)  # of a panel row, where the labels sit under the value
 SETTLE_REACH = 0.33  # of a panel row, how far the box may move up or down as it settles
-MIN_PANEL_SCORE = 0.29  # halfway between the weakest panel (0.335) and best no-panel frame (0.246)
+MIN_PANEL_SCORE = 0.29  # halfway between the weakest panel (0.334) and best no-panel frame (0.25)
 
 SAMPLE_FPS = 2.0  # frames read per second of video
 START_AFTER_S = 2.0  # the readout appears this long after impact
@@ -167,7 +169,7 @@ def value_boxes(panel_box: Box) -> list[Box]:
     boxes = []
     for row in range(ROWS):
         for col in range(COLUMNS):
-            cx0 = x0 + (x1 - x0) * col // COLUMNS + CELL_INSET_X
+            cx0 = x0 + (x1 - x0) * col // COLUMNS + (LEFT_INSET_X if col == 0 else CELL_INSET_X)
             cx1 = x0 + (x1 - x0) * (col + 1) // COLUMNS - CELL_INSET_X
             cy0 = y0 + (y1 - y0) * row // ROWS + CELL_INSET_TOP
             cy1 = y0 + (y1 - y0) * (row + 1) // ROWS
