@@ -38,8 +38,8 @@ FIELDS = (
 )  # panel order: left to right, then top to bottom
 COLUMNS, ROWS = 2, 6
 CELL_INSET_X, CELL_INSET_TOP = 3, 2  # px trimmed off each cell before reading
-LEFT_INSET_X = 1  # px trimmed off the left column's left edge; the later sim UI starts its
-# values nearly flush with the panel's edge
+LEFT_INSET_X = 1  # px trimmed off the left column's left edge; the box can start a few px
+# inside the panel's edge, close to a wide left-column value
 VALUE_SHARE = 0.72  # top share of a cell that holds the value, the label sits below
 
 UPSCALE = 4
@@ -85,8 +85,8 @@ FORMATS = {
     "face_to_path": r"\d+\.\d [CO]",
     "face_to_target": r"\d+\.\d [CO]",
     "smash": r"\d\.\d\d",
-    "back_spin": r"\d+",
-    "total_spin": r"\d+",
+    "back_spin": r"\d{3,}",  # no shot spins under 100 rpm, so fewer digits is a number cut short
+    "total_spin": r"\d{3,}",
 }  # every other field is r"\d+\.\d"
 
 PANEL_REFERENCE = Path(__file__).with_name("sim_panel.png")  # edges of a 126 x 243 panel
@@ -97,11 +97,15 @@ COARSE_SCALES = np.round(np.arange(0.6, 1.41, 0.05), 2)  # of the reference size
 COARSE_HITS = 3  # best coarse hits refined at full size
 HIT_SPACING = 0.5  # of the panel height between coarse hits
 FINE_SCALES = np.round(np.arange(-0.05, 0.051, 0.01), 2)  # around a coarse hit's scale
-HEIGHT_SCALES = np.round(np.arange(-0.05, 0.051, 0.01), 2)  # height scale less width scale
-ROI_MARGIN = 0.25  # of the coarse box height searched around it at full size, more than a row
+# Width scale less height scale. The later sim UI's panel is about 15% wider for its height than
+# the reference, and a uniform scale lines up its rows but leaves the box short of both sides.
+ASPECTS = np.round(np.arange(-0.05, 0.201, 0.01), 2)
+# Of the coarse box height searched around it at full size. On a panel wider than the reference
+# the coarse hit can sit two rows off.
+ROI_MARGIN = 0.4
 LABEL_BAND = (0.6, 0.86)  # of a panel row, where the labels sit under the value
 SETTLE_REACH = 0.33  # of a panel row, how far the box may move up or down as it settles
-MIN_PANEL_SCORE = 0.29  # halfway between the weakest panel (0.335) and best no-panel frame (0.246)
+MIN_PANEL_SCORE = 0.29  # halfway between the weakest panel (0.334) and best no-panel frame (0.25)
 
 SAMPLE_FPS = 2.0  # frames read per second of video
 START_AFTER_S = 2.0  # the readout appears this long after impact
@@ -443,7 +447,8 @@ def _best_panel(frame: np.ndarray) -> Panel | None:
 
 
 def _refine(edges: np.ndarray, coarse_box: Box, scale: float) -> Panel | None:
-    """The best match near a coarse hit: over FINE_SCALES, then over HEIGHT_SCALES for the height.
+    """The best match near a coarse hit: over FINE_SCALES, then the width over ASPECTS at that
+    height, then the height over ASPECTS at the new width.
 
     The box then settles where the whole panel and its value rows line up best together.
     """
@@ -455,7 +460,9 @@ def _refine(edges: np.ndarray, coarse_box: Box, scale: float) -> Panel | None:
     if not fine:
         return None
     _, scale = max(fine, key=lambda f: f[0][0])
-    tall = [hit for sy in scale + HEIGHT_SCALES for hit in _peaks(roi, scale, sy)]
+    wide = [(hit, sx) for sx in scale + ASPECTS for hit in _peaks(roi, sx, scale)]
+    _, sx = max(wide, key=lambda w: w[0][0])
+    tall = [hit for sy in sx - ASPECTS for hit in _peaks(roi, sx, sy)]
     score, (bx0, bx1, by0, by1) = max(tall, key=lambda h: h[0])
     return Panel(_settle(edges, (bx0 + left, bx1 + left, by0 + top, by1 + top)), score)
 

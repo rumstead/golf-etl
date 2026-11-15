@@ -9,6 +9,7 @@ from golf_etl.sim import (
     DIGIT_HEIGHT,
     FIELDS,
     MIN_PANEL_READS,
+    PANEL_REFERENCE,
     THRESHOLDS,
     UPSCALE,
     Glyph,
@@ -37,13 +38,14 @@ from golf_etl.sim import (
 )
 from tests.sim_fixtures import load
 
-MARGIN = 40  # px around the panel in every fixture
+MARGIN = 40  # px around the panel in every fixture but 4859-s13, which has 34 on the left
+PANEL_LEFT = {"4859-s13": 34}  # px left of the panel where it is not MARGIN
 PANEL_SIZES = {  # (width, height) of the panel in the source video
     "4761-s1": (126, 243),
     "4762-s8": (126, 243),
     "4758-s1-white": (104, 204),
     "4758-s2-tinted": (104, 204),
-    "4859-s13": (125, 241),  # the later sim UI: mixed-case labels, values flush left
+    "4859-s13": (141, 241),  # the later sim UI: mixed-case labels, a wider panel
 }
 # (x0, x1, y0, y1) where the cell grid of the reference panel lines up with the fixture's cells.
 # The 4762 panel sits 2 to 3 px up and right of the MARGIN box, and the 4758 panel is 107 x 211.
@@ -52,11 +54,13 @@ PANEL_BOXES = {
     "4762-s8": (42, 168, 38, 281),
     "4758-s1-white": (42, 149, 41, 252),
     "4758-s2-tinted": (42, 149, 41, 252),
-    "4859-s13": (40, 165, 40, 281),
+    "4859-s13": (34, 175, 40, 281),
 }
 # IMG_4758 frames cut to (1170, 1380, 200, 520) at 119 s and (1190, 1360, 225, 485) at 72 s
 ROW_LOW_BOX = (51, 158, 48, 259)
 NO_LABELS_BOX = (31, 138, 23, 234)
+# IMG_4877's after-shot frame at 2:08.9 cut to (1300, 1700, 100, 560)
+ROWS_HIGH_BOX = (141, 290, 115, 353)
 READS_BLANK = {
     ("4758-s2-tinted", "club_path"),  # the dim 4 breaks apart in this single tinted frame
     ("4758-s1-white", "club_speed"),  # a clip artifact at the cell's bottom edge
@@ -82,7 +86,8 @@ def _cells(
     """The value cell of every field, by field name, and the fixture's labels."""
     rgb, labels = load(name)
     w, h = PANEL_SIZES[name]
-    panel = (MARGIN, MARGIN + w, MARGIN, MARGIN + h)
+    left = PANEL_LEFT.get(name, MARGIN)
+    panel = (left, left + w, MARGIN, MARGIN + h)
     boxes = value_boxes(tuple(a + b for a, b in zip(panel, box_error, strict=True)))
     cells = {f: rgb[y0:y1, x0:x1] for f, (x0, x1, y0, y1) in zip(FIELDS, boxes, strict=True)}
     return cells, labels
@@ -103,13 +108,6 @@ def test_reads_every_labeled_cell_of_each_fixture(name, glyphs):
     labeled = [f for f in FIELDS if labels[f]]
     reads = {f: read_cell(cells[f], f, glyphs) for f in labeled}
     assert reads == {f: None if (name, f) in READS_BLANK else labels[f] for f in labeled}
-
-
-def test_a_value_flush_with_the_panels_left_edge_reads(glyphs):
-    # the later sim UI starts the club path value at the panel's edge; a wide leading digit
-    # touching the cell edge must not count as the cell border
-    cells, labels = _cells("4859-s13")
-    assert read_cell(cells["club_path"], "club_path", glyphs) == labels["club_path"]
 
 
 @pytest.mark.parametrize("name", PANEL_SIZES)
@@ -308,6 +306,38 @@ def test_finds_the_panel_when_the_best_coarse_hit_is_a_row_low():
     assert panel is not None
     errors = [a - b for a, b in zip(panel.box, ROW_LOW_BOX, strict=True)]
     assert all(abs(e) <= 2 for e in errors), (panel.box, errors)
+
+
+def test_finds_the_panel_when_the_best_coarse_hit_is_two_rows_high():
+    # the later sim UI's wider panel matches best two rows high at half size
+    panel = find_panel(load("4877-rows-high")[0])
+    assert panel is not None
+    errors = [a - b for a, b in zip(panel.box, ROWS_HIGH_BOX, strict=True)]
+    assert all(abs(e) <= 2 for e in errors), (panel.box, errors)
+
+
+def test_committed_glyphs_read_the_club_path_through_the_found_box_of_the_wider_layout():
+    glyphs = Glyphs.load(PANEL_REFERENCE.with_name("sim_glyphs.npz"))
+    rgb, _ = load("4877-rows-high")
+    panel = find_panel(rgb)
+    assert panel is not None
+    x0, x1, y0, y1 = value_boxes(panel.box)[FIELDS.index("club_path")]
+    assert read_cell(rgb[y0:y1, x0:x1], "club_path", glyphs) == "1.1 I-O"
+
+
+def test_committed_glyphs_read_a_phone_screenshot_of_the_wider_layout_with_no_wrong_number():
+    # a phone screenshot of IMG_4877 after swing-03 settled, cut to the screen around the panel
+    glyphs = Glyphs.load(PANEL_REFERENCE.with_name("sim_glyphs.npz"))
+    rgb, labels = load("4877-phone")
+    panel = find_panel(rgb)
+    assert panel is not None
+    boxes = value_boxes(panel.box)
+    reads = {
+        f: read_cell(rgb[y0:y1, x0:x1], f, glyphs)
+        for f, (x0, x1, y0, y1) in zip(FIELDS, boxes, strict=True)
+    }
+    assert {f: r for f, r in reads.items() if r is not None and r != labels[f]} == {}
+    assert reads["total_length"] == "164.0"
 
 
 def test_finds_the_panel_when_the_labels_are_hidden():

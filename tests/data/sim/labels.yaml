@@ -169,3 +169,29 @@ wall.png:
   total_spin: "4709"
   face_to_target: "1.7 O"
   club_speed: "76.3"
+4877-rows-high.png:
+  club_path: null
+  carry_game: null
+  face_to_path: null
+  carry_raw: null
+  back_spin: null
+  total_length: null
+  smash: null
+  ball_speed: null
+  peak_height: null
+  total_spin: null
+  face_to_target: null
+  club_speed: null
+4877-phone.png:
+  club_path: "1.1 I-O"
+  carry_game: "149.2"
+  face_to_path: "3.0 C"
+  carry_raw: "149.3"
+  back_spin: "4267"
+  total_length: "164.0"
+  smash: "1.29"
+  ball_speed: "106.9"
+  peak_height: "64.3"
+  total_spin: "4468"
+  face_to_target: "2.0 C"
+  club_speed: "82.8"
