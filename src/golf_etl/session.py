@@ -129,9 +129,10 @@ number that is the same on good and poor swings does not explain the difference 
 
 INDEX_GUIDE = """\
 One row per session, oldest first. Each number is the session's median over the swings that \
-have it, from that session's `session.md`. Path is positive in-to-out and the faces are \
-positive open. Tempo is backswing over downswing. Compare sessions at the same venue. A row \
-with only a venue is a session without a `summary.json`.
+have it, from that session's `session.md`. Path is positive in-to-out, the faces are \
+positive open, and side spin is negative to the left. Tempo is backswing over downswing. \
+Compare sessions at the same venue. A row with only a venue is a session without a \
+`summary.json`.
 """
 
 SIM_GUIDE = """\
@@ -140,6 +141,10 @@ or unreadable in most frames; check `07-after-shot.jpg` for those. A row of blan
 mean the read failed, that the next swing started before this shot's numbers showed, or that \
 the screen did not change after this swing (the simulator did not register a shot; `sim.json` \
 has `"unchanged": true`). In the last two cases `07-after-shot.jpg` shows the previous shot.
+Side spin, Launch (the launch angle up from the ground), Side launch (the launch angle to \
+the side) and Offline come from a second panel on the left of the screen, which the golfer \
+often stands in front of, so they are blank more often. They are as the simulator shows them: \
+a negative number is to the left.
 """
 
 SIM_COLUMNS = {
@@ -155,6 +160,10 @@ SIM_COLUMNS = {
     "Path": "club_path",
     "Face to path": "face_to_path",
     "Face to target": "face_to_target",
+    "Side spin": "side_spin",
+    "Launch": "vla",
+    "Side launch": "hla",
+    "Offline yd": "offline",
 }
 
 
@@ -168,6 +177,8 @@ INDEX_COLUMNS = {
     "Path": "club_path",
     "Face to path": "face_to_path",
     "Face to target": "face_to_target",
+    "Side spin": "side_spin",
+    "Launch": "vla",
     "Tempo": "tempo",
 }
 SUMMARY = "summary.json"

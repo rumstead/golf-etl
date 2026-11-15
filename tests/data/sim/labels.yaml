@@ -195,3 +195,23 @@ wall.png:
   total_spin: "4468"
   face_to_target: "2.0 C"
   club_speed: "82.8"
+# IMG_4877 at 2:30.0, 29s after swing-03, cut to (600, 1640, 170, 500) with the middle of the
+# screen painted over. The left panel is at (44, 183, 55, 296) and the readout panel at
+# (840, 989, 45, 283).
+4877-both.png:
+  club_path: "1.1 I-O"
+  carry_game: "149.2"
+  face_to_path: "3.0 C"
+  carry_raw: "149.3"
+  back_spin: "4267"
+  total_length: "164.1"
+  smash: "1.29"
+  ball_speed: "106.9"
+  peak_height: "64.3"
+  total_spin: "4468"
+  face_to_target: "2.0 C"
+  club_speed: "82.8"
+  side_spin: "-1326"
+  vla: "16.6"
+  hla: "-1.7"
+  offline: "-22.5"

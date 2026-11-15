@@ -44,6 +44,7 @@ from golf_etl.frames import (
 )
 from golf_etl.measures import body_measures
 from golf_etl.media import VideoInfo, encode_clip, probe, read_audio, read_frames
+from golf_etl.panel import Box
 from golf_etl.pose import PoseEstimator, write_pose_csv
 from golf_etl.session import (
     SUMMARY,
@@ -76,6 +77,15 @@ from golf_etl.sim import (
     smash_value,
     write_sim_json,
 )
+from golf_etl.sim_left import (
+    MIN_SHARED,
+    SHARED,
+    find_left_panel,
+    left_reads,
+    pick_left_panel,
+    read_left,
+    settle_left_panel,
+)
 
 Detector = Callable[[Path, VideoInfo, Settings], Detection]
 log = logging.getLogger(__name__)
@@ -88,6 +98,16 @@ PANEL_CHECKS = (1, 3)  # of each swing's frames read, searched again for the pan
 # that moves the panel a row moves it about 40px.
 PANEL_MOVED_PX = 5
 CHANGE_AFTER_S = 5.0  # the screen check reads from START_AFTER_S to this long after a candidate
+LEFT_CANDIDATES = 6  # swings whose frames are searched for the left panel
+# Before and after each of those impacts: at address the golfer stands clear of the left panel
+LEFT_SEARCH_S = (-1.0, 5.0, 9.0)
+LEFT_SETTLE_FRAMES = 8  # frames the left panel's box is settled on
+# Frames read for the left panel after the readout's window, spread evenly up to
+# LEFT_BEFORE_NEXT_S before the next impact (LEFT_LAST_S after the window for the last swing).
+# The golfer stands in front of the panel on and off, and the screen still shows this shot.
+LEFT_EXTRA_FRAMES = 12
+LEFT_BEFORE_NEXT_S = 0.75
+LEFT_LAST_S = 20.0
 CLUB_LONG_EDGE = 960  # frames read to see the club leave the ball
 CROP_PAD_S = 0.2  # the sequence crop follows the golfer from this long before address and after
 # the finish
@@ -201,6 +221,7 @@ def process_video(
     else:
         panel = _panel_or_none(video, info, impacts, cfg)
     venue = "sim" if panel is not None else "range"
+    left = _left_panel_or_none(video, info, impacts, panel) if panel is not None else None
     balls, timings, sims, bodies = [], [], [], []
     last_read: dict[str, str | None] | None = None  # the latest swing the screen gave numbers for
     for n, swing in enumerate(detection.swings, 1):
@@ -212,7 +233,9 @@ def process_video(
         timings.append(timing)
         bodies.append(body)
         if panel is not None:
-            shot = _write_sim(video, info, swing.impact_s, neighbors, panel, out, cfg, last_read)
+            shot = _write_sim(
+                video, info, swing.impact_s, neighbors, panel, out, cfg, last_read, left
+            )
             sims.append(shot)
             if shot is not None and any(shot.values.values()):
                 last_read = shot.values
@@ -424,8 +447,11 @@ def _write_sim(
     out: Path,
     cfg: Settings,
     previous: dict[str, str | None] | None = None,
+    left: Box | None = None,
 ) -> SimShot | None:
     """Read the panel over the swing's shot window and write sim.json; None when the read fails.
+    With the `left` panel's box, its fields are read from the same frames and a few more up to
+    the next swing, and added to the shot.
 
     `neighbors` are the previous and next swings' impacts. A window the next swing cuts off
     before the readout appears reads no frames, so every field is blank. The frames just before
@@ -437,6 +463,9 @@ def _write_sim(
     try:
         frames = read_frames(video, info, start, end, step_s=1 / SAMPLE_FPS) if start < end else []
         frames = _searched(frames, found)
+        on_left: list[dict[str, str | None]] = []
+        if left is not None:
+            frames = _reading_left(frames, left, on_left)
         before = (
             read_frames(video, info, before_start, before_end, step_s=1 / SAMPLE_FPS)
             if before_start < before_end
@@ -457,8 +486,96 @@ def _write_sim(
         shot = blank_shot(shot.frames)
     if shot.unchanged:
         log.info("%s: the screen did not change after impact; sim fields left blank", out.name)
-    write_sim_json(out / "sim.json", shot, panel)
+    elif left is not None and any(shot.values.values()):
+        shot = _with_left(video, info, shot, left, on_left, end, next_impact_s)
+    write_sim_json(out / "sim.json", shot, panel, left)
     return shot
+
+
+def _reading_left(
+    frames: Iterable[tuple[float, np.ndarray]], left: Box, reads: list[dict[str, str | None]]
+) -> Iterator[tuple[float, np.ndarray]]:
+    """The frames, with the left panel read in each and added to `reads`."""
+    for frame in frames:
+        reads.append(left_reads(frame[1], left, _glyphs()))
+        yield frame
+
+
+def _with_left(
+    video: Path,
+    info: VideoInfo,
+    shot: SimShot,
+    left: Box,
+    reads: list[dict[str, str | None]],
+    window_end_s: float,
+    next_impact_s: float | None,
+) -> SimShot:
+    """The shot with the left panel's fields, voted over `reads` from the shot's window and
+    over LEFT_EXTRA_FRAMES frames read after it, up to the next swing. The golfer stands in
+    front of the left panel on and off, and until the next shot the screen still shows this
+    one. A frame counts only when its left panel agrees with the shot's readout."""
+    last_s = window_end_s + LEFT_LAST_S
+    if next_impact_s is not None:
+        last_s = next_impact_s - LEFT_BEFORE_NEXT_S
+    last_s = min(last_s, info.duration_s - 2 / info.fps)
+    try:
+        for t in np.linspace(window_end_s, last_s, LEFT_EXTRA_FRAMES):
+            if last_s > window_end_s:
+                for _, img in list(read_frames(video, info, t, t + 1.5 / info.fps))[:1]:
+                    reads.append(left_reads(img, left, _glyphs()))
+        values, votes = read_left(reads, shot.values)
+    except Exception:
+        # a read bug costs this swing its left panel numbers, not the readout's
+        log.exception("left panel read failed at %.2fs", window_end_s)
+        return shot
+    return replace(shot, values=shot.values | values, votes=shot.votes | votes)
+
+
+def _left_panel_or_none(
+    video: Path, info: VideoInfo, impacts: list[float], panel: Panel
+) -> Box | None:
+    try:
+        return _find_left_panel(video, info, impacts, panel)
+    except Exception:
+        # a search bug costs the session its left panel numbers, not the rest of the session
+        log.exception("left panel search failed")
+        return None
+
+
+def _find_left_panel(
+    video: Path, info: VideoInfo, impacts: list[float], panel: Panel
+) -> Box | None:
+    """The simulator's left panel, or None when the video shows none.
+
+    One frame is searched at each LEFT_SEARCH_S around the first LEFT_CANDIDATES impacts, when
+    the readout panel reads MIN_SHARED of the numbers both panels show in it. The boxes found
+    must agree, and the box is then settled on the LEFT_SETTLE_FRAMES of those frames that
+    read the most of the panel."""
+    found = []  # (box, frame, the readout's values in the frame)
+    for impact in impacts[:LEFT_CANDIDATES]:
+        for t in (impact + at for at in LEFT_SEARCH_S):
+            if not 0 <= t < info.duration_s:
+                continue
+            for _, img in list(read_frames(video, info, t, t + 1.5 / info.fps))[:1]:
+                reads = field_reads([(t, img)], panel, _glyphs())
+                values = {field: read[0][1] for field, read in reads.items()}
+                if sum(values[f] is not None for f in SHARED) < MIN_SHARED:
+                    continue
+                box = find_left_panel(img, panel, values, _glyphs())
+                if box is not None:
+                    found.append((box, img, values))
+    box = pick_left_panel([b for b, _, _ in found])
+    if box is None:
+        log.info("no left panel: %d frames matched", len(found))
+        return None
+    near = [(img, values) for b, img, values in found if pick_left_panel([b, box]) is not None]
+    # the frames that show the most of the panel settle the most of its edges
+
+    def cells_read(sample: tuple[np.ndarray, dict[str, str | None]]) -> int:
+        return sum(v is not None for v in left_reads(sample[0], box, _glyphs()).values())
+
+    near.sort(key=cells_read, reverse=True)
+    return settle_left_panel(near[:LEFT_SETTLE_FRAMES], box, _glyphs())
 
 
 def _searched(
