@@ -330,6 +330,40 @@ def test_a_video_with_a_screen_writes_sim_json(tmp_path, screen_video):
     assert row.startswith("| swing-01 | 73.2 |")
 
 
+def _both_panels_video(path, covered: bool = False):
+    """3s of a blank wall, then 13s of IMG_4877's screen with both panels where the video has
+    them, the left one painted over when `covered`."""
+    rgb, _ = load("4877-both")
+    wall = np.full((1080, 1920, 3), 120, np.uint8)
+    still = wall.copy()
+    still[170:500, 600:1640] = rgb
+    if covered:
+        still[170:500, 600:800] = (180, 150, 130)
+    return _still_video(path, [(wall, 3.0), (still, 13.0)])
+
+
+def test_a_video_with_the_left_panel_reads_its_numbers(tmp_path):
+    result = _process(_both_panels_video(tmp_path / "both.mp4"), tmp_path / "out", [1.0])
+    sim = _sim(result.session_dir, 1)
+    left = {f: sim["fields"][f]["text"] for f in ("side_spin", "vla", "hla", "offline")}
+    assert left == {"side_spin": "-1326", "vla": "16.6", "hla": "-1.7", "offline": "-22.5"}
+    assert sim["fields"]["side_spin"]["value"] == -1326
+    assert sim["left_panel"] is not None
+    text = (result.session_dir / "session.md").read_text()
+    row = next(r for r in text.split("## Sim")[1].splitlines() if r.startswith("| swing-01"))
+    assert row.endswith("| -1326 | 16.6 | -1.7 | -22.5 |")
+
+
+def test_a_video_with_the_left_panel_covered_leaves_its_numbers_blank(tmp_path, caplog):
+    video = _both_panels_video(tmp_path / "covered.mp4", covered=True)
+    with caplog.at_level(logging.INFO, logger="golf_etl.pipeline"):
+        result = _process(video, tmp_path / "out", [1.0])
+    sim = _sim(result.session_dir, 1)
+    assert sim["fields"]["club_speed"]["text"] == "82.8"
+    assert sim["left_panel"] is None and "side_spin" not in sim["fields"]
+    assert "no left panel: 0 frames matched" in caplog.text
+
+
 def test_a_swing_with_no_time_before_the_next_still_gets_a_blank_sim_json(tmp_path, screen_video):
     # the second swing's clip starts before the first swing's readout appears
     result = _process(screen_video, tmp_path / "out", [1.0, 3.0])

@@ -81,7 +81,8 @@ CLIPPED_HEIGHT, CLIPPED_WIDTH = 0.8, 0.15
 
 CLASSES = "0123456789ICO"
 SUFFIX_LENGTH = {"club_path": 2, "face_to_path": 1, "face_to_target": 1}
-DECIMALS = {"smash": 2, "back_spin": 0, "total_spin": 0}  # every other field has 1
+DECIMALS = {"smash": 2, "back_spin": 0, "total_spin": 0, "side_spin": 0}  # the others have 1
+SIGNED = ("side_spin", "hla", "offline")  # shown with a "-" in front when negative
 FORMATS = {
     "club_path": r"\d+\.\d (I-O|O-I)",
     "face_to_path": r"\d+\.\d [CO]",
@@ -89,6 +90,7 @@ FORMATS = {
     "smash": r"\d\.\d\d",
     "back_spin": r"\d{3,}",  # no shot spins under 100 rpm, so fewer digits is a number cut short
     "total_spin": r"\d{3,}",
+    "side_spin": r"\d+",
 }  # every other field is r"\d+\.\d"
 
 PANEL_REFERENCE = Path(__file__).with_name("sim_panel.png")  # edges of a 126 x 243 panel
@@ -391,10 +393,11 @@ def screen_changed(
     return equal * 2 <= compared
 
 
-def write_sim_json(path: Path, shot: SimShot, panel: Panel) -> None:
-    """Write the shot's fields, their votes and the panel box as JSON."""
+def write_sim_json(path: Path, shot: SimShot, panel: Panel, left: Box | None = None) -> None:
+    """Write the shot's fields, their votes and the panel box as JSON, with the left panel's
+    box and fields when it was found."""
     fields = {}
-    for field in FIELDS:
+    for field in dict.fromkeys([*FIELDS, *shot.values]):
         text = shot.values.get(field)
         fields[field] = {
             "text": text,
@@ -404,6 +407,7 @@ def write_sim_json(path: Path, shot: SimShot, panel: Panel) -> None:
         }
     data = {
         "panel": list(panel.box),
+        "left_panel": list(left) if left is not None else None,
         "frames": shot.frames,
         "unchanged": shot.unchanged,
         "fields": fields,
@@ -452,7 +456,29 @@ def read_cell(cell: np.ndarray, field: str, glyphs: Glyphs) -> str | None:
     text, votes = top[0]
     if votes == 1 and min(score for t, score in reads if t == text) < LONE_MATCH:
         return None
+    if field in SIGNED and not text.startswith("-") and _sign_unclear(cell):
+        return None
     return text
+
+
+def _sign_unclear(cell: np.ndarray) -> bool:
+    """Whether a minus sign may sit at the cell's left edge, where `_is_blob` drops a blob as
+    the cell's border: at any threshold, a blob within EDGE_MARGIN of the left edge that is
+    shorter than a digit piece and sits in the middle half of the cell. The border itself runs
+    the cell's height. A number read without its minus sign is a wrong number, so the read is
+    dropped."""
+    dist = _distance(cell)
+    lo, hi = np.percentile(dist, PERCENTILES)
+    height = dist.shape[0]
+    digit = DIGIT_HEIGHT * height
+    for threshold in THRESHOLDS:
+        mask = (dist > lo + threshold * (hi - lo)).astype(np.uint8)
+        _, _, stats, _ = cv2.connectedComponentsWithStats(mask, connectivity=8)
+        for x, y, _, h, area in stats[1:]:
+            middle = height / 4 <= y + h / 2 <= 3 * height / 4
+            if x <= EDGE_MARGIN and area > MIN_AREA and h < SPLIT_HEIGHT * digit and middle:
+                return True
+    return False
 
 
 def _best_panel(frame: np.ndarray) -> Panel | None:
@@ -647,6 +673,8 @@ def _scored_read(
     if not _number_fits(cut, end, field, digit):
         return None
     text = _text(field, "".join(chars))
+    if text and field in SIGNED and cut[0] == "-":
+        text = f"-{text}"
     return (text, min(score for _, score in matches)) if text else None
 
 
@@ -667,8 +695,8 @@ def _number_fits(cut: list[str | Glyph], end: int, field: str, digit: float) -> 
 
     A digit that vanished leaves a gap wider than MAX_STEP between digit centers, and a digit
     that broke into marks leaves a "-" or a stray ".". The only mark allowed up to the space is
-    one "." the field's decimals left of the number's end. A "-" in the space or after it belongs
-    to the suffix, such as the path's dash.
+    one "." the field's decimals left of the number's end, and a "-" in front of a SIGNED
+    field's number. A "-" in the space or after it belongs to the suffix, such as the path's dash.
     """
     found = [g for g in cut if isinstance(g, Glyph)][:end]
     centers = [(g.left + g.right) / 2 for g in found]
@@ -679,6 +707,8 @@ def _number_fits(cut: list[str | Glyph], end: int, field: str, digit: float) -> 
     for item in cut:
         if isinstance(item, Glyph):
             before += 1
+        elif item == "-" and before == 0 and field in SIGNED and item is cut[0]:
+            continue
         elif before < end or (before == end and (item == "." or field not in SUFFIX_LENGTH)):
             points += item == "."
             if item != "." or before != point or point == end or points > 1:

@@ -108,14 +108,15 @@ def test_the_index_has_a_row_per_session(pub, remote, tmp_path):
         "venue": "sim",
         "swings": 5,
         "grades": {"good": 4, "fair": 1, "poor": 0},
-        "medians": {"smash": 1.29, "club_path": 2.3, "face_to_path": -1.8, "tempo": 2.7},
+        "medians": {"smash": 1.29, "club_path": 2.3, "face_to_path": -1.8, "tempo": 2.7}
+        | {"side_spin": -510.0},
     }
     (s1 / "summary.json").write_text(json.dumps(row))
     pub.publish(s1, "s1", marker("abc", "IMG_1.MOV", "test", "sim"))
     pub.publish(session(tmp_path, "s2"), "s2", marker("def", "IMG_2.MOV", "test", "range"))
     index = git("--git-dir", str(remote), "show", "main:sessions/index.md")
-    assert "| s1 | sim | 5 | 4 | 1 | 0 | | | 1.29 | | | 2.3 I-O | 1.8 C | | 2.7 |" in index
-    assert "| s2 | range | | | | | | | | | | | | | |" in index
+    assert "| s1 | sim | 5 | 4 | 1 | 0 | | | 1.29 | | | 2.3 I-O | 1.8 C | | -510 | | 2.7 |" in index
+    assert "| s2 | range | | | | | | | | | | | | | | | |" in index
 
 
 def test_published_files_reports_sizes_from_the_remote(pub, tmp_path):
