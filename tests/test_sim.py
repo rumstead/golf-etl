@@ -326,7 +326,7 @@ def test_committed_glyphs_read_the_club_path_through_the_found_box_of_the_wider_
 
 
 def test_committed_glyphs_read_a_phone_screenshot_of_the_wider_layout_with_no_wrong_number():
-    # a phone screenshot of IMG_4877 after swing-03 settled, cut to the screen around the panel
+    # a phone screenshot of IMG_4877 about 10s after swing-03, cut to the screen around the panel
     glyphs = Glyphs.load(PANEL_REFERENCE.with_name("sim_glyphs.npz"))
     rgb, labels = load("4877-phone")
     panel = find_panel(rgb)
