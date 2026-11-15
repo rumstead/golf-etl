@@ -1,10 +1,12 @@
 """Key swing positions from the pose track, and picking the sharpest nearby frame."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 import cv2
 import numpy as np
 
+from golf_etl.ball import RestSpot
 from golf_etl.pose import LEFT_WRIST, RIGHT_WRIST, PoseTrack
 
 STILL_MIN_S = 0.2
@@ -14,12 +16,17 @@ RISE_EPS_LEGS = 0.05  # how far the hands rise before the takeaway counts as sta
 TAKEAWAY_RISE_LEGS = 0.1  # the hip line counts once the hands are this far above address too
 ADDRESS_LEVEL_S = 0.2  # the address hand height is the median over this long before address
 TOP_VISIBLE_MIN = 0.5  # wrist visibility below this around the top: the hands were not seen
+CLUB_PATCH = (8.0, 6.0, 4.0)  # ball radii either side of the ball, above it, and below it
+CLUB_ADDRESS_S = (0.6, 0.15)  # the club sits at the ball from this long to this long before address
+CLUB_LEFT = 0.2  # share of the patch's change from address that counts as the club leaving
+CLUB_MIN_CHANGE = 3.0  # the club leaving changes the patch this many times its change at address
+CLUB_NEAR_ADDRESS_S = 0.3  # the club leaves the ball within this long of address
 
 
 @dataclass(frozen=True)
 class Positions:
     address_s: float  # end of the still stretch at address
-    takeaway_start_s: float  # the hands start rising from address
+    takeaway_start_s: float  # the club leaves the ball, or the hands start rising from address
     takeaway_s: float  # the hands reach the hip line going back
     halfway_s: float  # hands up to the shoulders going back
     top_s: float
@@ -28,6 +35,7 @@ class Positions:
     follow_through_s: float  # a fixed time after impact
     finish_s: float
     top_in_frame: bool = True  # False when the hands are not seen around the top
+    start_from_club: bool = False  # the takeaway start is the club leaving the ball
 
     def sequence(self) -> list[tuple[str, float]]:
         """Eight positions for the sequence sheet."""
@@ -54,6 +62,8 @@ class Timing:
     top_frame: int
     impact_frame: int
     top_in_frame: bool = True  # without it the top, and every duration using it, is a guess
+    # False when the takeaway start is the hands rising, which trails the club down the line
+    start_from_club: bool = False
 
     @property
     def backswing_s(self) -> float:
@@ -147,7 +157,47 @@ def swing_timing(p: Positions, clip_start_s: float, fps: float) -> Timing:
         frame(p.top_s),
         frame(p.impact_s),
         p.top_in_frame,
+        p.start_from_club,
     )
+
+
+def club_start(
+    frames: Iterable[tuple[float, np.ndarray]], rest: RestSpot, address_s: float, before_s: float
+) -> float | None:
+    """When the club leaves the ball: the last frame before the patch around the ball's rest
+    spot has changed CLUB_LEFT of the way from how it looks at address to its biggest change
+    by before_s, a time the club is known to be gone. The hands barely move in the picture
+    for the first part of a takeaway seen down the line, and the clubhead does.
+
+    None when the patch at address is not still enough to compare against (a waggle, or the
+    club set down late), or when the change is not within CLUB_NEAR_ADDRESS_S of address."""
+    times, patches = [], []
+    for t, rgb in frames:
+        h, w = rgb.shape[:2]
+        r = rest.radius * h
+        x0, x1 = round(rest.x * w - CLUB_PATCH[0] * r), round(rest.x * w + CLUB_PATCH[0] * r)
+        y0, y1 = round(rest.y * h - CLUB_PATCH[1] * r), round(rest.y * h + CLUB_PATCH[2] * r)
+        patch = rgb[max(0, y0) : y1, max(0, x0) : x1]
+        times.append(t)
+        patches.append(cv2.cvtColor(patch, cv2.COLOR_RGB2GRAY).astype(np.float32))
+    ts = np.asarray(times)
+    at_address = (ts >= address_s - CLUB_ADDRESS_S[0]) & (ts <= address_s - CLUB_ADDRESS_S[1])
+    after = (ts > address_s - CLUB_ADDRESS_S[1]) & (ts <= before_s)
+    if at_address.sum() < 3 or not after.any() or not patches[0].size:
+        return None
+    stack = np.stack(patches)
+    change = np.abs(stack - np.median(stack[at_address], axis=0)).mean(axis=(1, 2))
+    still = float(np.median(change[at_address]))
+    peak = int(np.flatnonzero(after)[np.argmax(change[after])])
+    if change[peak] < CLUB_MIN_CHANGE * max(still, 1e-3):
+        return None
+    left = still + CLUB_LEFT * (change[peak] - still)
+    if np.percentile(change[at_address], 90) > left:
+        return None
+    at_ball = np.flatnonzero(change[:peak] <= left)
+    if not at_ball.size or abs(ts[at_ball[-1]] - address_s) > CLUB_NEAR_ADDRESS_S:
+        return None
+    return float(ts[at_ball[-1]])
 
 
 def _rise_start(

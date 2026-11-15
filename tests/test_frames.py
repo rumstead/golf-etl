@@ -2,7 +2,8 @@ import cv2
 import numpy as np
 import pytest
 
-from golf_etl.frames import after_shot_time, pick_positions, sharpest, swing_timing
+from golf_etl.ball import RestSpot
+from golf_etl.frames import after_shot_time, club_start, pick_positions, sharpest, swing_timing
 from golf_etl.pose import (
     LEFT_HIP,
     LEFT_SHOULDER,
@@ -194,3 +195,45 @@ def test_after_shot_time_stays_inside_the_video():
 
 def test_after_shot_time_is_never_before_impact():
     assert after_shot_time(10.0, 8.0, duration_s=10.02) == 10.0
+
+
+REST = RestSpot(0.6, 0.8, 0.02, "white", 200.0, 80.0, face_on=False)
+
+
+def _club_frames(leaves_s: float | None, fps: float = 120.0, waggle_s: float | None = None):
+    """A 480x270 mat with the ball on REST and a clubhead beside it until leaves_s, when it
+    slides away over 0.1s. A waggle lifts the club off the ball for 0.3s from waggle_s."""
+    rng = np.random.default_rng(0)
+    for t in np.arange(8.0, 9.2, 1 / fps):
+        img = np.full((270, 480, 3), 70, np.uint8)
+        img = np.clip(img + rng.integers(-3, 4, img.shape), 0, 255).astype(np.uint8)
+        cv2.circle(img, (288, 216), 5, (255, 255, 255), -1)
+        away = 0.0 if leaves_s is None else float(np.clip((t - leaves_s) / 0.1, 0, 1))
+        if waggle_s is not None and waggle_s <= t < waggle_s + 0.3:
+            away = 1.0
+        x = round(270 - 60 * away)
+        cv2.rectangle(img, (x - 12, 208), (x + 4, 222), (200, 200, 200), -1)
+        yield float(t), img
+
+
+def test_club_start_is_when_the_club_leaves_the_ball():
+    start = club_start(_club_frames(8.7), REST, address_s=8.75, before_s=9.1)
+    assert start == pytest.approx(8.7, abs=2 / 120)
+
+
+def test_club_start_is_none_when_the_club_never_leaves():
+    assert club_start(_club_frames(None), REST, address_s=8.75, before_s=9.1) is None
+
+
+def test_club_start_is_none_when_the_club_is_not_still_at_address():
+    frames = _club_frames(8.7, waggle_s=8.2)
+    assert club_start(frames, REST, address_s=8.75, before_s=9.1) is None
+
+
+def test_club_start_is_none_far_from_address():
+    assert club_start(_club_frames(8.7), REST, address_s=9.05, before_s=9.1) is None
+
+
+def test_club_start_is_none_without_frames_at_address():
+    late = [f for f in _club_frames(8.7) if f[0] > 8.65]
+    assert club_start(late, REST, address_s=8.75, before_s=9.1) is None

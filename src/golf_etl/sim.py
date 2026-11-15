@@ -303,6 +303,24 @@ def smash_value(shot: SimShot | None) -> float | None:
     return float(text) if text else None
 
 
+def signed_value(field: str, text: str | None) -> float | None:
+    """A field's screen text as a number: a club path is positive in-to-out, a face is
+    positive open, and every other field is the number shown. None for a blank."""
+    if not text:
+        return None
+    number, _, suffix = text.partition(" ")
+    return -float(number) if suffix in ("O-I", "C") else float(number)
+
+
+def signed_text(field: str, value: float) -> str:
+    """A number as the screen would show it for the field, the reverse of `signed_value`."""
+    decimals = DECIMALS.get(field, 1)
+    if field in SUFFIX_LENGTH:
+        suffixes = ("I-O", "O-I") if field == "club_path" else ("O", "C")
+        return f"{abs(value):.{decimals}f} {suffixes[value < 0]}"
+    return f"{value:.{decimals}f}"
+
+
 def blank_shot(frames: int, unchanged: bool = False) -> SimShot:
     """A shot read from `frames` frames with every field blank."""
     return SimShot(dict.fromkeys(FIELDS), dict.fromkeys(FIELDS, 0), frames, {}, unchanged)
