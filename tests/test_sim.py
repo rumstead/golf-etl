@@ -325,6 +325,21 @@ def test_committed_glyphs_read_the_club_path_through_the_found_box_of_the_wider_
     assert read_cell(rgb[y0:y1, x0:x1], "club_path", glyphs) == "1.1 I-O"
 
 
+def test_committed_glyphs_read_a_phone_screenshot_of_the_wider_layout_with_no_wrong_number():
+    # a phone screenshot of IMG_4877 after swing-03 settled, cut to the screen around the panel
+    glyphs = Glyphs.load(PANEL_REFERENCE.with_name("sim_glyphs.npz"))
+    rgb, labels = load("4877-phone")
+    panel = find_panel(rgb)
+    assert panel is not None
+    boxes = value_boxes(panel.box)
+    reads = {
+        f: read_cell(rgb[y0:y1, x0:x1], f, glyphs)
+        for f, (x0, x1, y0, y1) in zip(FIELDS, boxes, strict=True)
+    }
+    assert {f: r for f, r in reads.items() if r is not None and r != labels[f]} == {}
+    assert reads["total_length"] == "164.0"
+
+
 def test_finds_the_panel_when_the_labels_are_hidden():
     # IMG_4758 at 72 s, kept gray: the projector color hides the labels under the values
     panel = find_panel(load("4758-no-labels")[0])
