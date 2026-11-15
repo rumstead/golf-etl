@@ -46,7 +46,7 @@ from golf_etl.sim import (
     SimShot,
     before_window,
     blank_shot,
-    counts_settled,
+    counts_from,
     field_reads,
     fields_read,
     find_panel,
@@ -139,7 +139,7 @@ def _screen_change_check(
             after_end = min(t + CHANGE_AFTER_S, info.duration_s)
             after = read_frames(video, info, t + START_AFTER_S, after_end, step_s=step)
             # the counting fields are still moving this soon after impact, so they stay out
-            values = read_shot(after, panel, _glyphs(), settled=False).values
+            values = read_shot(after, panel, _glyphs(), counts_from_s=None).values
             changed = screen_changed(field_reads(before, panel, _glyphs()), values)
         except Exception:
             log.exception("screen check failed at %.2fs", t)
@@ -393,8 +393,8 @@ def _write_sim(
             if before_start < before_end
             else []
         )
-        settled = counts_settled(impact_s, end)
-        shot = read_shot(frames, panel, _glyphs(), before, settled, previous)
+        counts_from_s = counts_from(impact_s, end)
+        shot = read_shot(frames, panel, _glyphs(), before, counts_from_s, previous)
     except Exception:
         # a read bug costs this swing its numbers, not the whole session
         log.exception("sim read failed for %s", out.name)
