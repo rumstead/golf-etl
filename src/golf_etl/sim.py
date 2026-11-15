@@ -60,6 +60,8 @@ CUT_SEARCH = 0.25  # digit widths around an even split searched for the darkest 
 GLYPH_SIZE = (12, 20)  # width, height
 ASPECT_WEIGHT = 0.5
 CLASS_MARGIN = 0.10  # score a glyph's class must beat every other class by, 0 and O as one
+DETAIL_MARGIN = 0.2  # and what it must beat a closer class by where the two classes differ
+DETAIL_FLOOR = 1e-4  # weight of a pixel where two classes' mean templates are equal
 # Best template score every glyph needs when only one threshold reads the cell: the highest value
 # that cost under 2% of the held-out right reads on IMG_4758.
 LONE_MATCH = 0.775
@@ -153,6 +155,16 @@ class Glyphs:
     def features(self) -> np.ndarray:
         """N x 240 float32: each image with its mean removed and scaled to unit norm."""
         return np.array([_normalize(image.ravel()) for image in self.images])
+
+    @cached_property
+    def groups(self) -> np.ndarray:
+        """N <U1: each template's class, with O counted as 0."""
+        return np.where(self.labels == "O", "0", self.labels)
+
+    @cached_property
+    def means(self) -> dict[str, np.ndarray]:
+        """Each class's mean feature."""
+        return {str(c): self.features[self.groups == c].mean(axis=0) for c in set(self.groups)}
 
     def save(self, path: Path) -> None:
         np.savez_compressed(path, images=self.images, aspects=self.aspects, labels=self.labels)
@@ -791,15 +803,42 @@ def _spread(items: list[Glyph], limit: int) -> list[Glyph]:
 
 
 def _match(glyph: Glyph, glyphs: Glyphs) -> tuple[str, float]:
-    """The best template's class and score; BROKEN when another class scores within CLASS_MARGIN."""
-    scores = glyphs.features @ glyph.image.ravel()
+    """The best template's class and score.
+
+    BROKEN when another class scores within CLASS_MARGIN, 0 and O as one, and `_tells_apart`
+    does not settle it for the best class.
+    """
+    feature = glyph.image.ravel()
+    scores = glyphs.features @ feature
     scores -= ASPECT_WEIGHT * np.abs(glyphs.aspects - glyph.aspect)
     best = int(np.argmax(scores))
-    groups = np.where(glyphs.labels == "O", "0", glyphs.labels)
-    rivals = scores[groups != groups[best]]
-    if rivals.size and scores[best] - rivals.max() < CLASS_MARGIN:
-        return BROKEN, float(scores[best])
+    group = str(glyphs.groups[best])
+    for rival in glyphs.means:
+        close = scores[best] - scores[glyphs.groups == rival].max() < CLASS_MARGIN
+        if rival != group and close and not _tells_apart(feature, glyphs, group, rival):
+            return BROKEN, float(scores[best])
     return str(glyphs.labels[best]), float(scores[best])
+
+
+def _tells_apart(feature: np.ndarray, glyphs: Glyphs, group: str, rival: str) -> bool:
+    """Whether the glyph is clearly `group` and not `rival` where the two classes differ.
+
+    An 8 and a 6, 0 or 9 share most of their ink, so their whole-image scores sit close. Each
+    pixel is weighted by how far apart the two classes' mean templates are there, and the best
+    `group` template must beat the best `rival` one by DETAIL_MARGIN on that weighted match.
+    """
+    weights = np.abs(glyphs.means[group] - glyphs.means[rival]) + DETAIL_FLOOR
+    glyph = _weighted(feature, weights)
+    ours = _weighted(glyphs.features[glyphs.groups == group], weights) @ glyph
+    theirs = _weighted(glyphs.features[glyphs.groups == rival], weights) @ glyph
+    return bool(ours.max() - theirs.max() >= DETAIL_MARGIN)
+
+
+def _weighted(features: np.ndarray, weights: np.ndarray) -> np.ndarray:
+    """Features with their weighted mean removed, scaled to unit weighted norm."""
+    mean = (features * weights).sum(axis=-1, keepdims=True) / weights.sum()
+    centered = (features - mean) * np.sqrt(weights)
+    return centered / (np.linalg.norm(centered, axis=-1, keepdims=True) + 1e-6)
 
 
 def _text(field: str, chars: str) -> str | None:

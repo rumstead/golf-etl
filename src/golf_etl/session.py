@@ -29,17 +29,19 @@ the full-size image does not open.
 """
 
 _AFTER_SHOT = """\
-- `07-after-shot.jpg` is a full-resolution frame a few seconds after impact. On a simulator \
+- `07-after-shot.jpg` is a full-resolution frame about 13s after impact, or earlier when the \
+next swing starts sooner. On a simulator \
 or launch monitor its screen shows this shot's numbers (club path, face, speeds, spin, carry). \
 Numbers visible in any other frame belong to the previous shot.
 """
 
 _AFTER_SHOT_SIM = """\
-- `07-after-shot.jpg` is a full-resolution frame a few seconds after impact. Its simulator screen \
-shows this shot's numbers, which the Sim table below already has as text: look here for the \
-cells the table leaves blank. Carry (game) and total length count up for about 13s after \
-impact while the ball flies and rolls, so in this frame they can still be short of the final \
-values the table has. Numbers visible in any other frame belong to the previous shot.
+- `07-after-shot.jpg` is a full-resolution frame about 13s after impact, or earlier when the \
+next swing starts sooner. Its simulator screen shows this shot's numbers, which the Sim table \
+below already has as text: look here for the cells the table leaves blank. Carry (game) and \
+total length count up for about 13s after impact while the ball flies and rolls, so in an \
+earlier frame they can still be short of the final values the table has. Numbers visible in \
+any other frame belong to the previous shot.
 - `sim.json` in each swing folder is that swing's Sim table row with each number's vote count \
 and when it first showed, and `"unchanged": true` when the screen did not change after the swing.
 """

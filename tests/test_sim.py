@@ -325,6 +325,16 @@ def test_committed_glyphs_read_the_club_path_through_the_found_box_of_the_wider_
     assert read_cell(rgb[y0:y1, x0:x1], "club_path", glyphs) == "1.1 I-O"
 
 
+def test_committed_glyphs_read_an_8_that_scores_close_to_a_6():
+    # club speed 82.8: both 8s score within CLASS_MARGIN of the 6 and 0 templates
+    glyphs = Glyphs.load(PANEL_REFERENCE.with_name("sim_glyphs.npz"))
+    rgb, _ = load("4877-rows-high")
+    panel = find_panel(rgb)
+    assert panel is not None
+    x0, x1, y0, y1 = value_boxes(panel.box)[FIELDS.index("club_speed")]
+    assert read_cell(rgb[y0:y1, x0:x1], "club_speed", glyphs) == "82.8"
+
+
 def test_committed_glyphs_read_a_phone_screenshot_of_the_wider_layout_with_no_wrong_number():
     # a phone screenshot of IMG_4877 about 10s after swing-03, cut to the screen around the panel
     glyphs = Glyphs.load(PANEL_REFERENCE.with_name("sim_glyphs.npz"))
