@@ -316,6 +316,8 @@ def write_swing(
         swing.impact_s, cfg.after_shot_s, info.duration_s, next_impact_s, cfg.pre_impact_s
     )
     window = list(read_frames(video, info, after, after + 1.5 * dt))
+    if not window:  # the video's last frame can sit before its stated end
+        window = list(read_frames(video, info, max(swing.impact_s, after - 1.0), after))[-1:]
     if not window:
         raise RuntimeError(f"no frames decoded for the after-shot frame at {after:.2f}s")
     ft, img = window[0]

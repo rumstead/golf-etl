@@ -27,7 +27,7 @@ class Settings:
     pre_impact_s: float = 2.5
     post_impact_s: float = 1.5
     # simulators show the shot's numbers by about 8s; carry (game) and total count up to about 13s
-    after_shot_s: float = 8.0
+    after_shot_s: float = 13.0
     still_speed: float = 0.15
     # the takeaway panel this long before the top, when the hands never reach the hip line
     takeaway_before_top_s: float = 0.33
