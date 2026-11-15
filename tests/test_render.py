@@ -3,6 +3,7 @@ import pytest
 from PIL import Image
 
 from golf_etl import render
+from golf_etl.pose import LEFT_FOOT_INDEX, LEFT_HEEL, RIGHT_FOOT_INDEX, RIGHT_HEEL
 from tests.ball_clips import address_pose
 from tests.poses import swing_track
 
@@ -30,12 +31,47 @@ def test_label_draws_without_touching_the_input():
     assert (out != 90).sum() > 1000
 
 
-def test_draw_pose_marks_pixels_and_skips_missing_pose():
-    lm = swing_track(10.0).nearest(10.0)
-    lm[[11, 12, 13, 14, 23, 24, 25, 26], :2] = 0.5
-    assert (render.draw_pose(frame(720, 1280), lm) != 90).any()
-    empty = np.full((33, 3), np.nan)
-    assert (render.draw_pose(frame(720, 1280), empty) == 90).all()
+def _golfer(toes: float = 0.0) -> np.ndarray:
+    """One pose in a 1280x720 frame: legs 0.35 frame heights (252px), hands at 0.5 across, and
+    the toes `toes` frame widths ahead of the heels."""
+    lm = swing_track(10.0).landmarks[:1].copy()
+    lm[:, [LEFT_HEEL, RIGHT_HEEL], :2] = (0.5, 0.92)
+    lm[:, [LEFT_FOOT_INDEX, RIGHT_FOOT_INDEX], :2] = (0.5 + toes, 0.92)
+    return lm
+
+
+def test_golfer_crop_face_on_leaves_a_club_length_beside_the_hands():
+    x0, x1, y0, y1 = render.golfer_crop(_golfer(), (720, 1280, 3))
+    assert (x0, x1) == (int(640 - 1.2 * 252), int(640 + 1.2 * 252))
+    assert y0 == int(0.3 * 720 - 0.5 * 252)  # the head over the shoulders
+    assert y1 == int(0.9 * 720 + 0.2 * 252)
+
+
+def test_golfer_crop_down_the_line_reaches_the_ball():
+    x0, x1, _, _ = render.golfer_crop(_golfer(toes=0.05), (720, 1280, 3), ball=(0.8, 0.95))
+    assert x0 == int(0.45 * 1280 - 0.6 * 252)
+    assert x1 == int(0.8 * 1280 + 0.3 * 252)
+
+
+def test_golfer_crop_down_the_line_without_a_rest_spot_keeps_the_toe_side():
+    x0, x1, _, _ = render.golfer_crop(_golfer(toes=-0.05), (720, 1280, 3))
+    assert x0 == int(0.45 * 1280 - 1.3 * 252)
+    assert x1 == int(0.55 * 1280 + 0.6 * 252)
+
+
+def test_golfer_crop_keeps_the_club_over_the_hands_at_the_top():
+    lm = swing_track(10.0).landmarks  # the hands reach 0.2 at the top
+    _, _, y0, _ = render.golfer_crop(lm, (720, 1280, 3))
+    assert y0 == 0  # 0.9 leg lengths over the hands is above the frame
+
+
+def test_golfer_crop_is_the_whole_frame_without_a_pose():
+    assert render.golfer_crop(np.full((5, 33, 3), np.nan), (720, 1280, 3)) == (0, 1280, 0, 720)
+
+
+def test_grid_never_upscales():
+    sheet = render.grid([frame(200, 100)] * 8, ["x"] * 8, 4, 2560, 3_700_000)
+    assert sheet.shape[:2] == (400, 400)
 
 
 def test_grid_of_eight_portrait_frames_fits_claude():

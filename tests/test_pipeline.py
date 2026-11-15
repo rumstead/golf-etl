@@ -69,7 +69,8 @@ def test_swing_folder_has_every_file_sized_for_claude(tmp_path):
     with Image.open(swing / "05-impact-zoom.jpg") as img:
         assert img.size == (2433, 1520)  # three 2592x540 native bands, fit to the pixel budget
     with Image.open(swing / "06-sequence.jpg") as img:
-        assert img.size == (2560, 720)  # two rows of four 640x360 cells
+        # two rows of four, each cropped to the golfer and narrower than the 16:9 frame
+        assert img.size[0] / img.size[1] < 0.9 * (4 * 16) / (2 * 9)
     assert result.swings == 1
     # a test pattern has no ball, so the row says why instead of a grade
     ball = json.loads((swing / "ball.json").read_text())
@@ -84,6 +85,9 @@ def test_swing_folder_has_every_file_sized_for_claude(tmp_path):
         "Ball flight: 0 good, 0 fair, 0 poor, 1 not tracked"
         in (result.session_dir / "session.md").read_text()
     )
+    assert "| swing-01 |" in (result.session_dir / "session.md").read_text().split("## Body")[1]
+    summary = json.loads((result.session_dir / "summary.json").read_text())
+    assert (summary["session"], summary["swings"]) == (result.session_id, 1)
     # the clip starts at 1.5s (impact 4.0s minus 2.5s), so impact is clip frame 75 at 30fps
     assert "| swing-01 |" in (result.session_dir / "session.md").read_text().split("## Timing")[1]
     assert "| 75 (4.00s) |" in (result.session_dir / "session.md").read_text()
@@ -179,7 +183,8 @@ def test_video_without_a_person_writes_a_zero_swing_session(tmp_path):
     assert result.swings == 0
     assert [r.reason for r in result.rejected] == ["no pose found"]
     assert result.session_id == "2026-10-02-0900-ffff0000"
-    assert sorted(p.name for p in result.session_dir.iterdir()) == ["session.md"]
+    assert sorted(p.name for p in result.session_dir.iterdir()) == ["session.md", "summary.json"]
+    assert json.loads((result.session_dir / "summary.json").read_text())["swings"] == 0
     assert result.venue == "range"  # no swings, so no panel search ran
     assert "- Venue: range" in (result.session_dir / "session.md").read_text()
 

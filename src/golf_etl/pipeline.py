@@ -32,10 +32,27 @@ from golf_etl.detect import (
     confirm_candidates,
     keep_swings,
 )
-from golf_etl.frames import Timing, after_shot_time, pick_positions, sharpest, swing_timing
+from golf_etl.frames import (
+    CLUB_ADDRESS_S,
+    Positions,
+    Timing,
+    after_shot_time,
+    club_start,
+    pick_positions,
+    sharpest,
+    swing_timing,
+)
+from golf_etl.measures import body_measures
 from golf_etl.media import VideoInfo, encode_clip, probe, read_audio, read_frames
 from golf_etl.pose import PoseEstimator, write_pose_csv
-from golf_etl.session import SessionSummary, session_id, video_time, write_session_md
+from golf_etl.session import (
+    SUMMARY,
+    SessionSummary,
+    session_id,
+    video_time,
+    write_session_md,
+    write_summary_json,
+)
 from golf_etl.sim import (
     MIN_COMPARED,
     MIN_PANEL_READS,
@@ -71,6 +88,9 @@ PANEL_CHECKS = (1, 3)  # of each swing's frames read, searched again for the pan
 # that moves the panel a row moves it about 40px.
 PANEL_MOVED_PX = 5
 CHANGE_AFTER_S = 5.0  # the screen check reads from START_AFTER_S to this long after a candidate
+CLUB_LONG_EDGE = 960  # frames read to see the club leave the ball
+CROP_PAD_S = 0.2  # the sequence crop follows the golfer from this long before address and after
+# the finish
 
 
 @dataclass(frozen=True)
@@ -181,15 +201,16 @@ def process_video(
     else:
         panel = _panel_or_none(video, info, impacts, cfg)
     venue = "sim" if panel is not None else "range"
-    balls, timings, sims = [], [], []
+    balls, timings, sims, bodies = [], [], [], []
     last_read: dict[str, str | None] | None = None  # the latest swing the screen gave numbers for
     for n, swing in enumerate(detection.swings, 1):
         next_impact = impacts[n] if n < len(impacts) else None
         neighbors = (impacts[n - 2] if n > 1 else None, next_impact)
         out = session_dir / f"swing-{n:02d}"
-        flight, timing = write_swing(video, info, swing, out, cfg, next_impact)
+        flight, timing, body = write_swing(video, info, swing, out, cfg, next_impact)
         balls.append(flight)
         timings.append(timing)
+        bodies.append(body)
         if panel is not None:
             shot = _write_sim(video, info, swing.impact_s, neighbors, panel, out, cfg, last_read)
             sims.append(shot)
@@ -209,26 +230,26 @@ def process_video(
             poor=poor,
             basis=basis,
         )
-    write_session_md(
-        session_dir / "session.md",
-        SessionSummary(
-            session_id=sid,
-            source_name=source_name,
-            captured=info.creation_time or uploaded_at,
-            checksum=checksum,
-            version=version,
-            swings=detection.swings,
-            rejected=detection.rejected,
-            duplicates=duplicates or [],
-            balls=balls,
-            ball_median=ball_median,
-            timings=timings,
-            sims=sims,
-            storage=cfg.storage,
-            venue=venue,
-            grade_basis=basis,
-        ),
+    summary = SessionSummary(
+        session_id=sid,
+        source_name=source_name,
+        captured=info.creation_time or uploaded_at,
+        checksum=checksum,
+        version=version,
+        swings=detection.swings,
+        rejected=detection.rejected,
+        duplicates=duplicates or [],
+        balls=balls,
+        ball_median=ball_median,
+        timings=timings,
+        sims=sims,
+        storage=cfg.storage,
+        venue=venue,
+        grade_basis=basis,
+        bodies=bodies,
     )
+    write_session_md(session_dir / "session.md", summary)
+    write_summary_json(session_dir / SUMMARY, summary)
     return SessionResult(sid, session_dir, len(detection.swings), detection.rejected, venue)
 
 
@@ -239,9 +260,9 @@ def write_swing(
     out: Path,
     cfg: Settings,
     next_impact_s: float | None = None,
-) -> tuple[BallFlight, Timing]:
-    """Write the swing's clip, follow the ball in it, then write the frames and time the swing
-    with impact at the last frame before the ball leaves its spot."""
+) -> tuple[BallFlight, Timing, dict[str, float | str | None]]:
+    """Write the swing's clip, follow the ball in it, then write the frames, time the swing
+    with impact at the last frame before the ball leaves its spot, and measure the body."""
     out.mkdir(parents=True, exist_ok=True)
     positions = pick_positions(
         swing.track, swing.impact_s, cfg.still_speed, cfg.transition_s, cfg.follow_through_s
@@ -273,6 +294,7 @@ def write_swing(
         cfg.follow_through_s,
         cfg.takeaway_before_top_s,
     )
+    positions = _from_club(video, info, positions, flight.rest)
     dt = 1 / info.fps
     picked: dict[str, tuple[float, np.ndarray]] = {"impact": impact_frames[i]}
     for name, t in positions.sequence():
@@ -296,16 +318,22 @@ def write_swing(
         lambda edge: render.fit(strip, edge), out / "05-impact-zoom-small.jpg", cfg.small_max_bytes
     )
 
-    overlays, labels = [], []
+    swing_s = (swing.track.times >= positions.address_s - CROP_PAD_S) & (
+        swing.track.times <= positions.finish_s + CROP_PAD_S
+    )
+    ball = (flight.rest.x, flight.rest.y) if flight.rest is not None else None
+    x0, x1, y0, y1 = render.golfer_crop(
+        swing.track.landmarks[swing_s], picked["impact"][1].shape, ball
+    )
+    panels, labels = [], []
     for name, _ in positions.sequence():
         ft, img = picked[name]
-        small = render.fit(img, cfg.frame_long_edge // 2)
-        overlays.append(render.draw_pose(small, swing.track.nearest(ft)))
+        panels.append(img[y0:y1, x0:x1])
         labels.append(f"{name} {video_time(ft)}")
-    sheet = render.grid(overlays, labels, 4, cfg.frame_long_edge, cfg.frame_max_pixels)
+    sheet = render.grid(panels, labels, 4, cfg.frame_long_edge, cfg.frame_max_pixels)
     render.save_jpeg(sheet, out / "06-sequence.jpg", cfg.jpeg_quality)
     render.save_jpeg_within(
-        lambda edge: render.grid(overlays, labels, 4, edge, cfg.frame_max_pixels),
+        lambda edge: render.grid(panels, labels, 4, edge, cfg.frame_max_pixels),
         out / "06-sequence-small.jpg",
         cfg.small_max_bytes,
     )
@@ -331,7 +359,26 @@ def write_swing(
     )
 
     write_pose_csv(swing.track, out / "pose.csv", positions.impact_s, clip_start, info.fps)
-    return flight, swing_timing(positions, clip_start, info.fps)
+    body = body_measures(swing.track, positions)
+    return flight, swing_timing(positions, clip_start, info.fps), body
+
+
+def _from_club(video: Path, info: VideoInfo, p: Positions, rest: RestSpot | None) -> Positions:
+    """The positions with the takeaway starting when the club leaves the ball, when the ball's
+    rest spot was found and the club is seen leaving it."""
+    if rest is None:
+        return p
+    try:
+        start_s = p.address_s - CLUB_ADDRESS_S[0]
+        frames = read_frames(video, info, start_s, p.takeaway_s + 1 / info.fps, CLUB_LONG_EDGE)
+        start = club_start(frames, rest, p.address_s, p.takeaway_s)
+    except Exception:
+        # a bug here costs the swing its club start, not the whole session
+        log.exception("club start failed at %.2fs", p.impact_s)
+        return p
+    if start is None:
+        return p
+    return replace(p, takeaway_start_s=start, start_from_club=True)
 
 
 @cache

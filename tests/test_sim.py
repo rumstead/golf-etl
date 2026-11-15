@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 import pytest
 
+from golf_etl import sim
 from golf_etl.sim import (
     COLUMNS,
     DIGIT_HEIGHT,
@@ -641,3 +642,20 @@ def test_screen_changed_needs_four_compared_fields_and_most_of_them_different():
     assert screen_changed(before, half) is True  # unchanged needs more than half equal
     three = {f: [(0.0, "1")] for f in FIELDS[:3]}
     assert screen_changed(three, {f: "2" for f in FIELDS[:3]}) is None
+
+
+def test_signed_value_reads_a_path_in_to_out_and_a_face_open_as_positive():
+    assert sim.signed_value("club_path", "2.3 I-O") == 2.3
+    assert sim.signed_value("club_path", "0.2 O-I") == -0.2
+    assert sim.signed_value("face_to_path", "2.5 C") == -2.5
+    assert sim.signed_value("face_to_target", "1.4 O") == 1.4
+    assert sim.signed_value("back_spin", "4670") == 4670
+    assert sim.signed_value("smash", None) is None
+
+
+def test_signed_text_shows_a_number_as_the_screen_does():
+    assert sim.signed_text("club_path", -0.25) == "0.2 O-I"
+    assert sim.signed_text("face_to_path", 1.75) == "1.8 O"
+    assert sim.signed_text("smash", 1.345) == "1.34"
+    assert sim.signed_text("back_spin", 4670.4) == "4670"
+    assert sim.signed_text("carry_raw", 148.36) == "148.4"

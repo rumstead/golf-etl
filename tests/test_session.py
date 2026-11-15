@@ -5,10 +5,13 @@ import pytest
 from golf_etl.ball import BallFlight
 from golf_etl.detect import Rejected, Swing
 from golf_etl.frames import Timing
+from golf_etl.measures import BODY_COLUMNS
 from golf_etl.session import (
     SessionSummary,
     session_id,
+    session_summary,
     video_time,
+    write_index,
     write_session_md,
 )
 from golf_etl.sim import FIELDS, SimShot
@@ -83,6 +86,7 @@ def test_session_md_has_a_timing_table(tmp_path):
         takeaway_start_frame=144,
         top_frame=240,
         impact_frame=288,
+        start_from_club=True,
     )
     write_session_md(
         path, summary(swings=[Swing(12.4, 1.0, 16.0, swing_track(12.4))], timings=[timing])
@@ -102,6 +106,7 @@ def test_timing_row_leaves_durations_out_when_the_top_is_out_of_frame(tmp_path):
         top_frame=240,
         impact_frame=288,
         top_in_frame=False,
+        start_from_club=True,
     )
     write_session_md(
         path, summary(swings=[Swing(12.4, 1.0, 16.0, swing_track(12.4))], timings=[timing])
@@ -295,3 +300,82 @@ def test_the_reading_guide_says_what_a_lost_track_means_on_each_basis(tmp_path):
     assert "followed, and that swing has no grade" not in text
     assert "on the px basis that swing has no grade" in text
     assert "on the smash basis its grade still comes from the sim" in text
+
+
+def test_timing_row_marks_a_start_timed_off_the_hands(tmp_path):
+    path = tmp_path / "session.md"
+    timing = Timing(11.2, 12.0, 12.4, 144, 240, 288)
+    write_session_md(
+        path, summary(swings=[Swing(12.4, 1.0, 16.0, swing_track(12.4))], timings=[timing])
+    )
+    assert "| swing-01 | 144 (11.20s) hands | 240 (12.00s) |" in path.read_text()
+
+
+def _graded(grades: list[str | None], **kw) -> SessionSummary:
+    """A session with one swing per grade, at 10s, 20s and so on."""
+    swings = [Swing(10.0 * n, 1.0, 16.0, swing_track(10.0 * n)) for n in range(1, len(grades) + 1)]
+    balls = [BallFlight("ok", grade=g) for g in grades]
+    return summary(swings=swings, balls=balls, **kw)
+
+
+def _shot(**values: str) -> SimShot:
+    return SimShot(dict.fromkeys(FIELDS) | values, dict.fromkeys(FIELDS, 3), 6, {})
+
+
+def _body(**values: float | str) -> dict:
+    return dict.fromkeys(BODY_COLUMNS.values()) | {"view": "down the line"} | values
+
+
+def test_session_md_has_a_body_table(tmp_path):
+    path = tmp_path / "session.md"
+    bodies = [_body(head_impact_up=-0.04, hands_impact_side=0.126, spine_impact=31.26), _body()]
+    write_session_md(path, _graded(["good", "good"], bodies=bodies))
+    text = path.read_text()
+    assert "- The Body table measures the pose" in text
+    body = text.split("## Body")[1]
+    assert "| Swing | View | Head top side | Head top up |" in body
+    assert "| swing-01 | down the line | | | | -0.04 | | +0.13 | | | | 31.3 |" in body
+    assert "| swing-02 | down the line | | | | | | | | | | |" in body
+    assert "## By grade" not in text  # one grade has nothing to compare against
+
+
+def test_session_md_averages_each_number_by_grade(tmp_path):
+    path = tmp_path / "session.md"
+    sims = [
+        _shot(club_path="3.0 I-O", face_to_path="2.0 C", smash="1.40"),
+        _shot(club_path="1.0 O-I", face_to_path="1.0 O", smash="1.30"),
+        _shot(club_path="4.0 I-O", smash="1.10"),
+        None,
+    ]
+    timings = [
+        Timing(9.2, 9.7, 10.0, 0, 0, 0, start_from_club=True),
+        Timing(19.3, 19.7, 20.0, 0, 0, 0, start_from_club=True),
+        Timing(29.5, 29.7, 30.0, 0, 0, 0),  # timed off the hands: left out
+        Timing(39.1, 39.7, 40.0, 0, 0, 0, top_in_frame=False, start_from_club=True),
+    ]
+    bodies = [_body(hands_impact_up=0.1), _body(hands_impact_up=0.2), _body(), _body()]
+    grades = ["good", "good", "poor", None]
+    write_session_md(path, _graded(grades, sims=sims, timings=timings, bodies=bodies))
+    table = path.read_text().split("## By grade")[1].split("## ")[0]
+    assert "| Measure | good (2) | poor (1) |" in table
+    assert "| Smash | 1.35 | 1.10 |" in table
+    assert "| Path | 1.0 I-O | 4.0 I-O |" in table
+    assert "| Face to path | 0.5 C |  |" in table
+    assert "| Backswing s | 0.45 |  |" in table
+    assert "| Hands impact up | +0.15 |  |" in table
+    assert "Carry raw" not in table  # no swing has it
+
+
+def test_session_summary_has_grade_counts_and_medians():
+    sims = [_shot(smash="1.40", club_path="3.0 I-O"), _shot(smash="1.30", club_path="1.0 O-I")]
+    sims += [_shot(smash="1.10"), None]
+    row = session_summary(_graded(["good", "good", "poor", None], sims=sims, venue="sim"))
+    assert row["grades"] == {"good": 2, "fair": 0, "poor": 1}
+    assert (row["venue"], row["swings"]) == ("sim", 4)
+    assert row["medians"] == {"smash": 1.3, "club_path": 1.0}
+
+
+def test_index_skips_a_folder_that_is_not_a_session(tmp_path):
+    (tmp_path / "notes").mkdir()
+    write_index(tmp_path, ".golf-etl.json")
+    assert "notes" not in (tmp_path / "index.md").read_text()
