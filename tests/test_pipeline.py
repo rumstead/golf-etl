@@ -423,7 +423,7 @@ def test_a_swing_whose_checked_frames_find_no_panel_still_reads(tmp_path, caplog
 def test_a_swing_that_fails_to_read_gets_no_sim_json(tmp_path, screen_video, monkeypatch, caplog):
     from golf_etl import pipeline
 
-    def broken(frames, panel, glyphs, before=(), settled=True, previous=None):
+    def broken(frames, panel, glyphs, before=(), counts_from_s=0.0, previous=None):
         raise ValueError("unreadable")
 
     monkeypatch.setattr(pipeline, "read_shot", broken)

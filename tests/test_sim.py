@@ -22,7 +22,7 @@ from golf_etl.sim import (
     before_window,
     blank_shot,
     build_glyphs,
-    counts_settled,
+    counts_from,
     cut_glyphs,
     fields_read,
     find_panel,
@@ -506,29 +506,44 @@ def test_before_window_stays_clear_of_the_previous_impact_and_the_video_start():
     assert before_window(1.0, None) == (0.0, 0.75)
 
 
-def _counting_frames():
-    """4761-s1 frames with carry_raw's 110.0 drawn over carry_game and total_length."""
+def _counting_frames(times=(102.0, 102.5, 103.0), source="carry_raw"):
+    """4761-s1 frames with `source`'s value (carry_raw 110.0, ball_speed 89.7) drawn over
+    carry_game and total_length."""
     rgb, _ = load("4761-s1")
     rgb = rgb.copy()
     boxes = dict(zip(FIELDS, value_boxes(PANEL_BOXES["4761-s1"]), strict=True))
-    x0, x1, y0, y1 = boxes["carry_raw"]
+    x0, x1, y0, y1 = boxes[source]
     for f in ("carry_game", "total_length"):
         bx0, _, by0, _ = boxes[f]
         rgb[by0 : by0 + y1 - y0, bx0 : bx0 + x1 - x0] = rgb[y0:y1, x0:x1]
-    return [(t, rgb) for t in (102.0, 102.5, 103.0)]
+    return [(t, rgb) for t in times]
 
 
 def test_counting_fields_are_blank_when_the_window_ends_before_they_settle(glyphs):
     frames = _counting_frames()
     panel = Panel(PANEL_BOXES["4761-s1"], 0.5)
     _, end = shot_window(100.0, 600.0, 112.0, 2.5)  # the next swing's clip starts at 109.5
-    shot = read_shot(frames, panel, glyphs, settled=counts_settled(100.0, end))
+    shot = read_shot(frames, panel, glyphs, counts_from_s=counts_from(100.0, end))
     assert shot.values["carry_game"] is None and shot.values["total_length"] is None
     assert shot.votes["total_length"] == 0 and "total_length" not in shot.first_seen_s
     assert shot.values["carry_raw"] == "110.0"
+    frames = _counting_frames((113.0, 113.5, 114.0))
     _, end = shot_window(100.0, 600.0, None, 2.5)
-    shot = read_shot(frames, panel, glyphs, settled=counts_settled(100.0, end))
+    shot = read_shot(frames, panel, glyphs, counts_from_s=counts_from(100.0, end))
     assert shot.values["carry_game"] == shot.values["total_length"] == "110.0"
+
+
+def test_counting_fields_vote_only_on_frames_after_they_settle(glyphs):
+    # the roll can hold a value short of the final one for longer than the final reads
+    early = _counting_frames((108.0, 109.0, 110.0, 111.0), source="ball_speed")
+    late = _counting_frames((113.0, 113.5))
+    panel = Panel(PANEL_BOXES["4761-s1"], 0.5)
+    every_frame = read_shot(early + late, panel, glyphs, counts_from_s=0.0)
+    assert every_frame.values["total_length"] == "89.7"
+    shot = read_shot(early + late, panel, glyphs, counts_from_s=counts_from(100.0, 115.0))
+    assert shot.values["total_length"] == shot.values["carry_game"] == "110.0"
+    assert shot.votes["total_length"] == 2
+    assert shot.first_seen_s["total_length"] == 113.0
 
 
 def test_sim_json_has_every_field(tmp_path, glyphs):
