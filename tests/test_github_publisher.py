@@ -19,7 +19,7 @@ S1 = {
     "sessions/s1/swing-01/pose.csv",
 }
 S2 = {p.replace("/s1/", "/s2/") for p in S1}
-INDEX = {"sessions/index.md"}
+INDEX = {"sessions/index.md", "sessions/chain.md"}
 
 
 @pytest.fixture
