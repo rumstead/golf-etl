@@ -12,6 +12,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
+from golf_etl.chain import CHAIN, LABELS, write_chain
 from golf_etl.session import INDEX, SUMMARY, write_index
 from golf_etl.storage.retention import SweepReport
 from golf_etl.storage.store import MARKER, SESSIONS
@@ -53,8 +54,9 @@ class GitHubPublisher:
         return proc
 
     def _checkout(self, session_id: str) -> bool:
-        """Clone into an empty work dir with only this session checked out, plus the index
-        and what it is built from: every session's summary and marker.
+        """Clone into an empty work dir with only this session checked out, plus the index,
+        chain.md, and what they are built from: every session's summary and marker, and the
+        takeaway labels.
 
         False when the remote has no branch yet; the work dir is then on an unborn branch.
         """
@@ -62,7 +64,8 @@ class GitHubPublisher:
         self.work.mkdir(parents=True)
         self._git("init", "-b", self.branch)
         self._git("remote", "add", "origin", self.remote)
-        index = [f"/{SESSIONS}/{INDEX}", f"/{SESSIONS}/*/{SUMMARY}", f"/{SESSIONS}/*/{MARKER}"]
+        index = [f"/{SESSIONS}/{INDEX}", f"/{SESSIONS}/{CHAIN}", f"/{SESSIONS}/{LABELS}"]
+        index += [f"/{SESSIONS}/*/{SUMMARY}", f"/{SESSIONS}/*/{MARKER}"]
         self._git("sparse-checkout", "set", "--no-cone", f"/{SESSIONS}/{session_id}/", *index)
         fetch = self._git(
             "fetch", "--depth", "1", "--filter=blob:none", "origin", self.branch, check=False
@@ -75,7 +78,8 @@ class GitHubPublisher:
         return True
 
     def publish(self, session_dir: Path, session_id: str, marker: dict) -> None:
-        """Replace sessions/<id>/ and rebuild sessions/index.md in one commit and push it.
+        """Replace sessions/<id>/ and rebuild sessions/index.md and sessions/chain.md in one
+        commit and push it.
         Nothing changed means no commit."""
         self._checkout(session_id)
         folder = f"{SESSIONS}/{session_id}"
@@ -84,7 +88,8 @@ class GitHubPublisher:
         shutil.copytree(session_dir, dest, ignore=shutil.ignore_patterns(*EXCLUDE))
         (dest / MARKER).write_text(json.dumps(marker, indent=2))
         write_index(self.work / SESSIONS, MARKER)
-        self._git("add", "-A", folder, f"{SESSIONS}/{INDEX}")
+        write_chain(self.work / SESSIONS)
+        self._git("add", "-A", folder, f"{SESSIONS}/{INDEX}", f"{SESSIONS}/{CHAIN}")
         if self._git("diff", "--cached", "--quiet", check=False).returncode == 0:
             return
         self._git("commit", "-m", f"publish {session_id}")

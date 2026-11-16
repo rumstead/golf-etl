@@ -106,8 +106,8 @@ def test_github_poll_publishes_to_the_repo_and_empties_the_inbox(remote, tmp_pat
     monkeypatch.setenv("GOLF_SCRATCH_DIR", str(tmp_path / "scratch"))
     assert main(["poll"]) == 0
     published = tree(remote)
-    assert "sessions/index.md" in published
-    sessions = {p.split("/")[1] for p in published} - {"index.md"}
+    assert {"sessions/index.md", "sessions/chain.md"} <= published
+    sessions = {p.split("/")[1] for p in published} - {"index.md", "chain.md"}
     assert len(sessions) == 1
     assert f"sessions/{sessions.pop()}/session.md" in published
     assert list((data / "inbox").glob("*.mp4")) == []  # the original is gone
@@ -136,6 +136,7 @@ def test_migrate_drive_moves_a_local_folder_session_to_the_repo(
     assert main(["migrate-drive"]) == 0
     assert tree(remote) == {
         "sessions/index.md",
+        "sessions/chain.md",
         "sessions/s1/.golf-etl.json",
         "sessions/s1/session.md",
         "sessions/s1/swing-01/01-address.jpg",

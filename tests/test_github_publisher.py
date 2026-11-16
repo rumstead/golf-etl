@@ -19,7 +19,7 @@ S1 = {
     "sessions/s1/swing-01/pose.csv",
 }
 S2 = {p.replace("/s1/", "/s2/") for p in S1}
-INDEX = {"sessions/index.md"}
+INDEX = {"sessions/index.md", "sessions/chain.md"}
 
 
 @pytest.fixture
@@ -145,3 +145,30 @@ def test_a_rejected_push_raises(pub, remote, tmp_path):
 
 def test_the_marker_carries_the_venue():
     assert marker("abc", "IMG_1.MOV", "test", "sim")["venue"] == "sim"
+
+
+def test_chain_reads_the_takeaway_labels_on_the_remote(pub, remote, tmp_path):
+    s1 = session(tmp_path, "s1")
+    per_swing = [
+        {"swing": n, "grade": "good", "view": "down the line", "strike": s, "spine_address": 36.0}
+        | {"spine_impact": 36.0 - s}
+        for n, s in enumerate([1.0, 1.1, 2.0, 2.2], 1)
+    ]
+    summary = {"captured": "2026-11-16T12:00:00+00:00", "venue": "sim", "swings": 4}
+    summary |= {"grades": {"good": 4, "fair": 0, "poor": 0}, "medians": {}, "per_swing": per_swing}
+    (s1 / "summary.json").write_text(json.dumps(summary))
+    pub.publish(s1, "s1", marker("abc", "IMG_1.MOV", "test", "sim"))
+    # the golfer adds labels to the repo by hand
+    clone = tmp_path / "clone"
+    git("clone", "-q", f"file://{remote}", str(clone))
+    (clone / "sessions" / "takeaway-labels.csv").write_text(
+        "session,swing,label,side,by,date\ns1,1,set,,owner,2026-11-16\n"
+    )
+    who = ["-c", "user.name=owner", "-c", "user.email=owner@localhost"]
+    git("-C", str(clone), "add", "-A")
+    git("-C", str(clone), *who, "commit", "-q", "-m", "labels")
+    git("-C", str(clone), "push", "-q", "origin", "main")
+    pub.publish(session(tmp_path, "s2"), "s2", marker("def", "IMG_2.MOV", "test", "range"))
+    chain = git("--git-dir", str(remote), "show", "main:sessions/chain.md")
+    assert "| level or set | kept | 1 (too few) |" in chain
+    assert "sessions/takeaway-labels.csv" in tree(remote)

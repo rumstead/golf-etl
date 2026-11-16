@@ -356,7 +356,23 @@ def session_summary(s: SessionSummary) -> dict:
         "grades": {g: sum(b.grade == g for b in s.balls) for g in ("good", "fair", "poor")},
         "grade_basis": s.grade_basis,
         "medians": medians,
+        "per_swing": _per_swing(s),
     }
+
+
+def _per_swing(s: SessionSummary) -> list[dict]:
+    """Each swing's grade, camera view and every number session.md has for it."""
+    rows = _numbers(s)
+    out = []
+    for i in range(len(s.swings)):
+        row: dict = {"swing": i + 1}
+        row["grade"] = s.balls[i].grade if i < len(s.balls) else None
+        row["view"] = s.bodies[i].get("view") if i < len(s.bodies) else None
+        for key, values in rows.items():
+            value = values[i] if i < len(values) else None
+            row[key] = None if value is None else round(value, 4)
+        out.append(row)
+    return out
 
 
 def write_summary_json(path: Path, s: SessionSummary) -> None:

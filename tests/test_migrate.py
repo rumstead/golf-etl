@@ -53,6 +53,7 @@ def test_migration_copies_everything_but_clips_and_zips_then_deletes_from_drive(
     assert report == MigrateReport(copied=["s1"], deleted=["s1"], kept=[], blocked=[])
     assert tree(remote) == {
         "sessions/index.md",
+        "sessions/chain.md",
         "sessions/s1/.golf-etl.json",
         "sessions/s1/session.md",
         "sessions/s1/swing-01/01-address.jpg",
