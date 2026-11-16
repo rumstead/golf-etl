@@ -21,7 +21,9 @@ NOW = datetime(2026, 10, 17, 12, 0, tzinfo=UTC)
 TTL = timedelta(hours=24)
 
 
-def add_upload(upload_dir, uid, data, size, filename="IMG_4601.MOV", age=timedelta(hours=1)):
+def add_upload(
+    upload_dir, uid, data, size, filename="IMG_4601.MOV", age=timedelta(hours=1), club=None
+):
     """A tusd filestore upload: the data file <id> and its <id>.info."""
     upload_dir.mkdir(parents=True, exist_ok=True)
     path = upload_dir / uid
@@ -30,7 +32,8 @@ def add_upload(upload_dir, uid, data, size, filename="IMG_4601.MOV", age=timedel
         "ID": uid,
         "Size": size,
         "Offset": len(data),
-        "MetaData": {"filename": filename, "filetype": "video/quicktime"},
+        "MetaData": {"filename": filename, "filetype": "video/quicktime"}
+        | ({"club": club} if club else {}),
         "Storage": {
             "Type": "filestore",
             "Path": str(path),
@@ -67,6 +70,21 @@ def test_finished_upload_with_a_taken_name_gets_a_suffix(dirs):
     assert finish_upload(third, "IMG_4601.MOV", inbox) == inbox / "IMG_4601-3.MOV"
     assert (inbox / "IMG_4601.MOV").read_bytes() == b"first"
     assert (inbox / "IMG_4601-2.MOV").read_bytes() == b"second"
+
+
+def test_finished_upload_carries_its_club_in_the_name(dirs):
+    uploads, inbox = dirs
+    first = add_upload(uploads, "a", b"one", 3)
+    assert finish_upload(first, "IMG_4881.MOV", inbox, "mixed") == inbox / "IMG_4881.mixed.MOV"
+    second = add_upload(uploads, "b", b"two", 3)
+    taken = inbox / "IMG_4881-2.mixed.MOV"
+    assert finish_upload(second, "IMG_4881.MOV", inbox, "mixed") == taken
+
+
+def test_finished_upload_of_a_7_iron_has_no_tag(dirs):
+    uploads, inbox = dirs
+    upload = add_upload(uploads, "a", b"one", 3)
+    assert finish_upload(upload, "IMG_4881.MOV", inbox, "7iron") == inbox / "IMG_4881.MOV"
 
 
 def test_finished_upload_name_cannot_leave_the_inbox(dirs):
@@ -124,6 +142,13 @@ def test_sweep_moves_a_complete_upload_whose_hook_was_missed(dirs):
     assert sweep_uploads(uploads, inbox, NOW, TTL) == ["IMG_4601.MOV"]
     assert (inbox / "IMG_4601.MOV").read_bytes() == b"video"
     assert list(uploads.iterdir()) == []
+
+
+def test_sweep_keeps_the_club_of_an_upload_whose_hook_was_missed(dirs):
+    uploads, inbox = dirs
+    add_upload(uploads, "abc", b"video", 5, filename="IMG_4881.MOV", club="driver")
+    sweep_uploads(uploads, inbox, NOW, TTL)
+    assert (inbox / "IMG_4881.driver.MOV").read_bytes() == b"video"
 
 
 def test_sweep_moves_the_other_uploads_when_one_fails(dirs, monkeypatch):
@@ -209,12 +234,18 @@ def test_pre_create_hook_rejects_names_that_would_land_without_a_video_suffix(fi
     assert hook_response(payload, Settings())["RejectUpload"] is True
 
 
+def test_pre_create_hook_rejects_an_unknown_club():
+    meta = {"filename": "IMG_1.MOV", "club": "putter"}
+    payload = {"Type": "pre-create", "Event": {"Upload": {"MetaData": meta}}}
+    assert hook_response(payload, Settings())["HTTPResponse"]["Body"] == "unknown club"
+
+
 def test_pre_create_hook_accepts_videos():
     payload = {"Type": "pre-create", "Event": {"Upload": {"MetaData": {"filename": "IMG_1.MOV"}}}}
     assert hook_response(payload, Settings()) == {}
 
 
-def post_finish(path, filename="IMG_4601.MOV"):
+def post_finish(path, filename="IMG_4601.MOV", club=None):
     return {
         "Type": "post-finish",
         "Event": {
@@ -222,7 +253,8 @@ def post_finish(path, filename="IMG_4601.MOV"):
                 "ID": path.name,
                 "Size": 5,
                 "Offset": 5,
-                "MetaData": {"filename": filename, "filetype": "video/quicktime"},
+                "MetaData": {"filename": filename, "filetype": "video/quicktime"}
+                | ({"club": club} if club else {}),
                 "Storage": {"Type": "filestore", "Path": str(path), "InfoPath": f"{path}.info"},
             },
             "HTTPRequest": {"Method": "PATCH", "URI": f"/files/{path.name}"},
@@ -236,6 +268,13 @@ def test_post_finish_hook_moves_the_upload(tmp_path):
     assert hook_response(post_finish(upload), cfg) == {}
     assert (tmp_path / "inbox" / "IMG_4601.MOV").read_bytes() == b"video"
     assert not upload.exists()
+
+
+def test_post_finish_hook_tags_the_club(tmp_path):
+    cfg = Settings(inbox_root=str(tmp_path), upload_dir=str(tmp_path / "uploads"))
+    upload = add_upload(tmp_path / "uploads", "abc", b"video", 5)
+    hook_response(post_finish(upload, club="mixed"), cfg)
+    assert (tmp_path / "inbox" / "IMG_4601.mixed.MOV").read_bytes() == b"video"
 
 
 def test_post_finish_hook_ignores_files_outside_the_upload_dir(tmp_path):

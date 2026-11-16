@@ -7,6 +7,7 @@ from datetime import datetime
 from pathlib import Path
 
 from golf_etl.ball import BallFlight, summary_line
+from golf_etl.club import DEFAULT as DEFAULT_CLUB
 from golf_etl.detect import Rejected, Swing
 from golf_etl.frames import Timing
 from golf_etl.measures import ANGLES, BODY_COLUMNS, by_grade
@@ -72,7 +73,8 @@ left blank.
 _VENUE = """\
 - Venue is sim when the simulator's readout panel was found in the video, otherwise range. \
 Camera setups differ between the two, so compare pose and panels only with sessions at the \
-same venue.
+same venue. Club is the club the golfer picked when uploading; mixed is a session of several \
+clubs, so its swings do not compare with each other.
 """
 
 
@@ -209,6 +211,7 @@ class SessionSummary:
     grade_basis: str = "ball_px"  # "sim_smash" when the grades come from the sim's smash factor
     # one per swing, in order: `measures.body_measures` of the swing
     bodies: list[dict[str, float | str | None]] = field(default_factory=list)
+    club: str = DEFAULT_CLUB  # "7 iron", "driver", or "mixed" for a session of several clubs
 
 
 def video_time(t: float) -> str:
@@ -234,6 +237,7 @@ def write_session_md(path: Path, s: SessionSummary) -> None:
         f"- Pipeline: {s.version}",
         f"- Swings: {len(s.swings)}",
         f"- Venue: {s.venue}",
+        f"- Club: {s.club}",
         "",
     ]
     if s.swings and s.balls:
@@ -336,6 +340,7 @@ def session_summary(s: SessionSummary) -> dict:
         "source": s.source_name,
         "captured": s.captured.isoformat(),
         "venue": s.venue,
+        "club": s.club,
         "swings": len(s.swings),
         "grades": {g: sum(b.grade == g for b in s.balls) for g in ("good", "fair", "poor")},
         "grade_basis": s.grade_basis,

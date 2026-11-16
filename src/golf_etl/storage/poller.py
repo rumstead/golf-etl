@@ -9,6 +9,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 
+from golf_etl.club import from_name
 from golf_etl.config import Settings
 from golf_etl.pipeline import SessionResult
 from golf_etl.storage.publish import Publisher, marker
@@ -24,7 +25,8 @@ from golf_etl.storage.store import (
 
 log = logging.getLogger(__name__)
 
-# process(video, out_root, *, source_name, checksum, uploaded_at, duplicates) -> SessionResult
+# process(video, out_root, *, source_name, checksum, uploaded_at, duplicates, club)
+# -> SessionResult
 Processor = Callable[..., SessionResult]
 
 
@@ -100,18 +102,20 @@ class Poller:
         try:
             local = work / video.name
             self.inbox.download(claimed, local)
+            source_name, club = from_name(video.name)
             result = self.process(
                 local,
                 work / "out",
-                source_name=video.name,
+                source_name=source_name,
                 checksum=checksum,
                 uploaded_at=video.modified,
                 duplicates=duplicates,
+                club=club,
             )
             self.publisher.publish(
                 result.session_dir,
                 result.session_id,
-                marker(checksum, video.name, self.version, result.venue),
+                marker(checksum, source_name, self.version, result.venue),
             )
             self.inbox.delete(claimed)
         except Exception:
