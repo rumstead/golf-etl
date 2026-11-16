@@ -46,7 +46,7 @@ from golf_etl.frames import (
 from golf_etl.measures import body_measures
 from golf_etl.media import VideoInfo, encode_clip, probe, read_audio, read_frames
 from golf_etl.panel import FIELDS, Box
-from golf_etl.pose import PoseEstimator, write_pose_csv
+from golf_etl.pose import PoseEstimator, PoseTrack, toes_direction, write_pose_csv
 from golf_etl.session import (
     SUMMARY,
     SessionSummary,
@@ -88,6 +88,7 @@ from golf_etl.sim_left import (
     read_left,
     settle_left_panel,
 )
+from golf_etl.strike import BEFORE_S, Strike, read_strike, write_strike_json
 
 Detector = Callable[[Path, VideoInfo, Settings], Detection]
 log = logging.getLogger(__name__)
@@ -124,6 +125,7 @@ class SessionResult:
     swings: int
     rejected: list[Rejected]
     venue: str  # "sim" when the readout panel was found in the video, otherwise "range"
+    strikes: int = 0  # swings with a Strike read
 
 
 def detect_video(video: Path, info: VideoInfo, cfg: Settings) -> Detection:
@@ -227,16 +229,17 @@ def process_video(
         panel = _panel_or_none(video, info, impacts, cfg)
     venue = "sim" if panel is not None else "range"
     left = _left_panel_or_none(video, info, impacts, panel) if panel is not None else None
-    balls, timings, sims, bodies = [], [], [], []
+    balls, timings, sims, bodies, strikes = [], [], [], [], []
     last_read: dict[str, str | None] | None = None  # the latest swing the screen gave numbers for
     for n, swing in enumerate(detection.swings, 1):
         next_impact = impacts[n] if n < len(impacts) else None
         neighbors = (impacts[n - 2] if n > 1 else None, next_impact)
         out = session_dir / f"swing-{n:02d}"
-        flight, timing, body = write_swing(video, info, swing, out, cfg, next_impact)
+        flight, timing, body, strike = write_swing(video, info, swing, out, cfg, next_impact)
         balls.append(flight)
         timings.append(timing)
         bodies.append(body)
+        strikes.append(strike.diameters if strike else None)
         if panel is not None:
             shot = _write_sim(
                 video, info, swing.impact_s, neighbors, panel, out, cfg, last_read, left
@@ -276,10 +279,15 @@ def process_video(
         grade_basis=basis,
         bodies=bodies,
         club=club,
+        strikes=strikes,
     )
     write_session_md(session_dir / "session.md", summary)
     write_summary_json(session_dir / SUMMARY, summary)
-    return SessionResult(sid, session_dir, len(detection.swings), detection.rejected, venue)
+    read = sum(s is not None for s in strikes)
+    log.info("%s: strike read on %d of %d swings", sid, read, len(strikes))
+    return SessionResult(
+        sid, session_dir, len(detection.swings), detection.rejected, venue, strikes=read
+    )
 
 
 def write_swing(
@@ -289,9 +297,10 @@ def write_swing(
     out: Path,
     cfg: Settings,
     next_impact_s: float | None = None,
-) -> tuple[BallFlight, Timing, dict[str, float | str | None]]:
+) -> tuple[BallFlight, Timing, dict[str, float | str | None], Strike | None]:
     """Write the swing's clip, follow the ball in it, then write the frames, time the swing
-    with impact at the last frame before the ball leaves its spot, and measure the body."""
+    with impact at the last frame before the ball leaves its spot, and measure the body and
+    where on the face the ball was struck."""
     out.mkdir(parents=True, exist_ok=True)
     positions = pick_positions(
         swing.track, swing.impact_s, cfg.still_speed, cfg.transition_s, cfg.follow_through_s
@@ -334,11 +343,17 @@ def write_swing(
                 raise RuntimeError(f"no frames decoded around {name} at {t:.2f}s")
             picked[name] = sharpest(window)
 
+    strike = _strike(video, info, impact_frames, impact_s, flight.rest, swing.track, address_pose)
+    write_strike_json(out / "strike.json", strike)
     names = {-1: "impact -1", 0: "impact", 1: "impact +1"}
+    zoomed, middle = impact_frames, i
+    if strike is not None:
+        names = {-1: "contact -1", 0: "contact", 1: "contact +1"}
+        zoomed, middle = _around(video, info, impact_frames, strike.contact)
     strip = np.vstack(
         [
-            render.label(render.zoom_crop(img, address_pose), names[j - i])
-            for j, (_, img) in enumerate(impact_frames)
+            render.label(render.zoom_crop(img, address_pose), names[j - middle])
+            for j, (_, img) in enumerate(zoomed)
         ]
     )
     zoom = render.fit(strip, cfg.frame_long_edge, cfg.frame_max_pixels)
@@ -389,7 +404,51 @@ def write_swing(
 
     write_pose_csv(swing.track, out / "pose.csv", positions.impact_s, clip_start, info.fps)
     body = body_measures(swing.track, positions)
-    return flight, swing_timing(positions, clip_start, info.fps), body
+    return flight, swing_timing(positions, clip_start, info.fps), body, strike
+
+
+def _strike(
+    video: Path,
+    info: VideoInfo,
+    frames: list[tuple[float, np.ndarray]],
+    impact_s: float,
+    rest: RestSpot | None,
+    track: PoseTrack,
+    address_pose: np.ndarray,
+) -> Strike | None:
+    """Where on the face the ball was struck, None without a rest spot or face-on, where the
+    camera looks along the face."""
+    side = toes_direction(address_pose, track.aspect)
+    if rest is None or rest.face_on or not side:
+        return None
+    try:
+        before = list(
+            read_frames(video, info, impact_s - BEFORE_S, impact_s - BEFORE_S + 1.5 / info.fps)
+        )
+        if not before:
+            return None
+        return read_strike(frames, before[0][1], rest, side)
+    except Exception:
+        # a bug here costs the swing its strike, not the whole session
+        log.exception("strike read failed at %.2fs", impact_s)
+        return None
+
+
+def _around(
+    video: Path, info: VideoInfo, frames: list[tuple[float, np.ndarray]], k: int
+) -> tuple[list[tuple[float, np.ndarray]], int]:
+    """Frame k of `frames` with the frame either side of it, reading one more from the video
+    when k is at an end, and k's place in that list."""
+    dt = 1 / info.fps
+    out, middle = frames[max(0, k - 1) : k + 2], min(k, 1)
+    if k == len(frames) - 1:
+        t = frames[k][0]
+        out += list(read_frames(video, info, t + dt / 2, t + 1.5 * dt))[:1]
+    if k == 0:
+        t = frames[0][0]
+        before = list(read_frames(video, info, t - 1.5 * dt, t - dt / 2))[-1:]
+        out, middle = before + out, len(before)
+    return out, middle
 
 
 def _from_club(video: Path, info: VideoInfo, p: Positions, rest: RestSpot | None) -> Positions:

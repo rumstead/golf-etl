@@ -19,7 +19,7 @@ def test_process_writes_a_session_locally(tmp_path, capsys):
     video = make_video_with_clicks(tmp_path / "empty.mp4", [3.0], seconds=6.0, size="640x360")
     assert main(["process", str(video), "--out", str(tmp_path / "out")]) == 0
     out = capsys.readouterr().out
-    assert "0 swings, 1 rejected" in out
+    assert "0 swings, 1 rejected, strike read on 0 of 0" in out
     assert len(list((tmp_path / "out").glob("*/session.md"))) == 1
 
 
