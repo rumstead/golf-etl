@@ -46,7 +46,7 @@ from golf_etl.frames import (
 from golf_etl.measures import body_measures
 from golf_etl.media import VideoInfo, encode_clip, probe, read_audio, read_frames
 from golf_etl.panel import FIELDS, Box
-from golf_etl.pose import PoseEstimator, PoseTrack, toes_direction, write_pose_csv
+from golf_etl.pose import PoseEstimator, toes_direction, write_pose_csv
 from golf_etl.session import (
     SUMMARY,
     SessionSummary,
@@ -88,7 +88,14 @@ from golf_etl.sim_left import (
     read_left,
     settle_left_panel,
 )
-from golf_etl.strike import BEFORE_S, Strike, read_strike, write_strike_json
+from golf_etl.strike import (
+    BEFORE_S,
+    Strike,
+    diameters,
+    read_strike,
+    session_radius,
+    write_strike_json,
+)
 
 Detector = Callable[[Path, VideoInfo, Settings], Detection]
 log = logging.getLogger(__name__)
@@ -239,7 +246,7 @@ def process_video(
         balls.append(flight)
         timings.append(timing)
         bodies.append(body)
-        strikes.append(strike.diameters if strike else None)
+        strikes.append(strike)
         if panel is not None:
             shot = _write_sim(
                 video, info, swing.impact_s, neighbors, panel, out, cfg, last_read, left
@@ -247,6 +254,11 @@ def process_video(
             sims.append(shot)
             if shot is not None and any(shot.values.values()):
                 last_read = shot.values
+    # one ball is too few pixels to set the scale, so every strike uses the session's
+    radius = session_radius(strikes)
+    for n, strike in enumerate(strikes, 1):
+        write_strike_json(session_dir / f"swing-{n:02d}" / "strike.json", strike, radius)
+    strikes = [diameters(s, radius) for s in strikes]
     smashes = [smash_value(s) for s in sims] if sims else [None] * len(balls)
     balls, ball_median, basis = grade_session(balls, smashes, cfg)
     good, poor = (
@@ -343,8 +355,7 @@ def write_swing(
                 raise RuntimeError(f"no frames decoded around {name} at {t:.2f}s")
             picked[name] = sharpest(window)
 
-    strike = _strike(video, info, impact_frames, impact_s, flight.rest, swing.track, address_pose)
-    write_strike_json(out / "strike.json", strike)
+    strike = _strike(video, info, impact_frames, i, impact_s, flight.rest, swing, address_pose)
     names = {-1: "impact -1", 0: "impact", 1: "impact +1"}
     zoomed, middle = impact_frames, i
     if strike is not None:
@@ -411,14 +422,15 @@ def _strike(
     video: Path,
     info: VideoInfo,
     frames: list[tuple[float, np.ndarray]],
+    impact: int,
     impact_s: float,
     rest: RestSpot | None,
-    track: PoseTrack,
+    swing: Swing,
     address_pose: np.ndarray,
 ) -> Strike | None:
     """Where on the face the ball was struck, None without a rest spot or face-on, where the
-    camera looks along the face."""
-    side = toes_direction(address_pose, track.aspect)
+    camera looks along the face. `impact` is the impact frame's index in `frames`."""
+    side = toes_direction(address_pose, swing.track.aspect)
     if rest is None or rest.face_on or not side:
         return None
     try:
@@ -427,7 +439,7 @@ def _strike(
         )
         if not before:
             return None
-        return read_strike(frames, before[0][1], rest, side)
+        return read_strike(frames, impact, before[0][1], rest, side)
     except Exception:
         # a bug here costs the swing its strike, not the whole session
         log.exception("strike read failed at %.2fs", impact_s)
