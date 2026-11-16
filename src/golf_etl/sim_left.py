@@ -79,10 +79,10 @@ def find_left_panel(
     top = max(0, int(y0 - SEARCH_ROWS * (y1 - y0)))
     bottom = min(frame.shape[0], int(y1 + SEARCH_ROWS * (y1 - y0)))
     area = cv2.cvtColor(frame[top:bottom, : max(0, x0 - int(cell_w))], cv2.COLOR_RGB2GRAY)
-    cells = dict(zip(FIELDS, value_boxes(panel.box), strict=True))
+    cells = dict(zip(panel.layout, value_boxes(panel.box), strict=True))
     hits = []  # (column, row, x, y) of a shared number's middle on the left
     for field in SHARED:
-        if values.get(field) is None:
+        if values.get(field) is None or field not in cells:
             continue
         cx0, cx1, cy0, cy1 = cells[field]
         hit = _best_match(area, cv2.cvtColor(frame[cy0:cy1, cx0:cx1], cv2.COLOR_RGB2GRAY))

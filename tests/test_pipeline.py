@@ -2,6 +2,7 @@ import json
 import logging
 import re
 import subprocess
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import cv2
@@ -9,6 +10,7 @@ import numpy as np
 import pytest
 from PIL import Image
 
+from golf_etl import pipeline
 from golf_etl.ball import on_rest_spot, track_ball
 from golf_etl.config import Settings
 from golf_etl.detect import Detection, Swing
@@ -22,7 +24,7 @@ from golf_etl.pose import (
     RIGHT_FOOT_INDEX,
     RIGHT_HEEL,
 )
-from golf_etl.sim import value_boxes
+from golf_etl.sim import FIELDS, value_boxes
 from tests.ball_clips import address_pose, make_ball_clip
 from tests.conftest import make_video, make_video_with_clicks
 from tests.poses import swing_track
@@ -330,16 +332,58 @@ def test_a_video_with_a_screen_writes_sim_json(tmp_path, screen_video):
     assert row.startswith("| swing-01 | 73.2 |")
 
 
-def _both_panels_video(path, covered: bool = False):
+def test_numbers_that_contradict_each_other_are_left_blank(
+    tmp_path, screen_video, monkeypatch, caplog
+):
+    read = pipeline.read_shot
+
+    def misread(*args, **kwargs):
+        shot = read(*args, **kwargs)
+        return replace(shot, values=shot.values | {"face_to_target": "4.6 O"})
+
+    monkeypatch.setattr(pipeline, "read_shot", misread)
+    with caplog.at_level(logging.INFO, logger="golf_etl.pipeline"):
+        result = _process(screen_video, tmp_path / "out", [1.0])
+    fields = _sim(result.session_dir, 1)["fields"]
+    faces = ("club_path", "face_to_path", "face_to_target")
+    assert [fields[f]["text"] for f in faces] == [None] * 3
+    assert fields["club_speed"]["text"] == "73.2"
+    assert "['club_path', 'face_to_path', 'face_to_target'] do not fit each other" in caplog.text
+
+
+def _both_panels_video(path, covered: bool = False, traded: tuple[str, str] | None = None):
     """3s of a blank wall, then 13s of IMG_4877's screen with both panels where the video has
-    them, the left one painted over when `covered`."""
+    them, the left one painted over when `covered`, and two whole tiles of the readout panel
+    traded when `traded` names their fields."""
     rgb, _ = load("4877-both")
     wall = np.full((1080, 1920, 3), 120, np.uint8)
     still = wall.copy()
     still[170:500, 600:1640] = rgb
     if covered:
         still[170:500, 600:800] = (180, 150, 130)
+    if traded:
+        shown = still.copy()
+
+        def tile(field):  # the readout panel is at (1442, 1589, 215, 453) in the frame
+            row, col = divmod(FIELDS.index(field), 2)
+            y, x = 215 + row * 238 // 6, 1442 + col * 147 // 2
+            return slice(y, y + 39), slice(x, x + 73)
+
+        a, b = traded
+        still[tile(a)], still[tile(b)] = shown[tile(b)], shown[tile(a)]
     return _still_video(path, [(wall, 3.0), (still, 13.0)])
+
+
+def test_tiles_that_were_moved_read_under_their_own_names(tmp_path, caplog):
+    video = _both_panels_video(tmp_path / "moved.mp4", traded=("face_to_path", "face_to_target"))
+    with caplog.at_level(logging.INFO, logger="golf_etl.pipeline"):
+        result = _process(video, tmp_path / "out", [1.0])
+    assert "tiles are not where the simulator ships them" in caplog.text
+    fields = _sim(result.session_dir, 1)["fields"]
+    assert fields["face_to_path"]["text"] == "3.0 C"
+    assert fields["face_to_target"]["text"] == "2.0 C"
+    assert fields["club_path"]["text"] == "1.1 I-O"
+    assert fields["side_spin"]["text"] == "-1326"  # the left panel still agrees with it
 
 
 def test_a_video_with_the_left_panel_reads_its_numbers(tmp_path):

@@ -44,7 +44,7 @@ from golf_etl.frames import (
 )
 from golf_etl.measures import body_measures
 from golf_etl.media import VideoInfo, encode_clip, probe, read_audio, read_frames
-from golf_etl.panel import Box
+from golf_etl.panel import FIELDS, Box
 from golf_etl.pose import PoseEstimator, write_pose_csv
 from golf_etl.session import (
     SUMMARY,
@@ -77,6 +77,7 @@ from golf_etl.sim import (
     smash_value,
     write_sim_json,
 )
+from golf_etl.sim_layout import broken, cell_texts, shipped_holds, solve_layout
 from golf_etl.sim_left import (
     MIN_SHARED,
     SHARED,
@@ -98,6 +99,8 @@ PANEL_CHECKS = (1, 3)  # of each swing's frames read, searched again for the pan
 # that moves the panel a row moves it about 40px.
 PANEL_MOVED_PX = 5
 CHANGE_AFTER_S = 5.0  # the screen check reads from START_AFTER_S to this long after a candidate
+# After each of those impacts, when carry (game) and total length have stopped counting
+LAYOUT_AFTER_S = (13.5, 14.5, 16.0, 19.0)
 LEFT_CANDIDATES = 6  # swings whose frames are searched for the left panel
 # Before and after each of those impacts: at address the golfer stands clear of the left panel
 LEFT_SEARCH_S = (-1.0, 5.0, 9.0)
@@ -432,10 +435,44 @@ def _find_panel(video: Path, info: VideoInfo, impacts: list[float], cfg: Setting
     if panel is None:
         matched = sum(p is not None for p in found)
         log.info("no readout panel: %d of %d frames matched", matched, len(found))
-    elif all(fields_read(img, panel, _glyphs()) < MIN_PANEL_READS for img in images):
+        return None
+    panel = _with_layout(panel, _settled_frames(video, info, impacts))
+    if all(fields_read(img, panel, _glyphs()) < MIN_PANEL_READS for img in images):
         log.info("no readout panel: no searched frame reads %d fields in it", MIN_PANEL_READS)
         return None
     return panel
+
+
+def _settled_frames(video: Path, info: VideoInfo, impacts: list[float]) -> list[np.ndarray]:
+    """One frame at each LAYOUT_AFTER_S after the first PANEL_CANDIDATES impacts that comes
+    before the next swing. Carry (game) and total length count up while the ball flies and
+    rolls, and until they stop they break the checks a layout is told by."""
+    images = []
+    for n, impact in enumerate(impacts[:PANEL_CANDIDATES], 1):
+        last = impacts[n] - LEFT_BEFORE_NEXT_S if n < len(impacts) else info.duration_s
+        for t in (impact + after for after in LAYOUT_AFTER_S):
+            if t < last:
+                images += [
+                    img for _, img in list(read_frames(video, info, t, t + 1.5 / info.fps))[:1]
+                ]
+    return images
+
+
+def _with_layout(panel: Panel, images: list[np.ndarray]) -> Panel:
+    """The panel with the field in each cell told from the numbers in `images`. When they do
+    not settle it, the panel is read as the simulator ships it, unless the numbers contradict
+    that too: then no cell is read, because a number under the wrong name is worse than none."""
+    samples = [cell_texts(img, panel.box, _glyphs()) for img in images]
+    layout = solve_layout(samples)
+    if layout is None and shipped_holds(samples):
+        log.info("the readout's layout is not settled by its numbers; reading it as shipped")
+        return panel
+    if layout is None:
+        log.info("the readout's numbers fit no layout; its tiles are not read")
+        return replace(panel, layout=(None,) * len(FIELDS))
+    if layout != FIELDS:
+        log.info("the readout's tiles are not where the simulator ships them: %s", layout)
+    return replace(panel, layout=layout)
 
 
 def _write_sim(
@@ -484,6 +521,15 @@ def _write_sim(
             "%s: readout panel moved to %s; sim fields left blank", out.name, [p.box for p in boxes]
         )
         shot = blank_shot(shot.frames)
+    failed, _ = broken(shot.values)
+    if failed:
+        # numbers that contradict each other: a misread, or a tile that is not where it was
+        log.info("%s: %s do not fit each other; left blank", out.name, sorted(failed))
+        shot = replace(
+            shot,
+            values={f: None if f in failed else v for f, v in shot.values.items()},
+            votes={f: 0 if f in failed else n for f, n in shot.votes.items()},
+        )
     if shot.unchanged:
         log.info("%s: the screen did not change after impact; sim fields left blank", out.name)
     elif left is not None and any(shot.values.values()):

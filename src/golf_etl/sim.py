@@ -20,22 +20,8 @@ from pathlib import Path
 import cv2
 import numpy as np
 
-from golf_etl.panel import Box, Panel
+from golf_etl.panel import FIELDS, Box, Panel
 
-FIELDS = (
-    "club_path",
-    "carry_game",
-    "face_to_path",
-    "carry_raw",
-    "back_spin",
-    "total_length",
-    "smash",
-    "ball_speed",
-    "peak_height",
-    "total_spin",
-    "face_to_target",
-    "club_speed",
-)  # panel order: left to right, then top to bottom
 COLUMNS, ROWS = 2, 6
 CELL_INSET_X, CELL_INSET_TOP = 3, 2  # px trimmed off each cell before reading
 LEFT_INSET_X = 1  # px trimmed off the left column's left edge; the box can start a few px
@@ -178,7 +164,7 @@ class Glyphs:
 
 
 def value_boxes(panel_box: Box) -> list[Box]:
-    """The value part of each cell in FIELDS order, in frame px."""
+    """The value part of each cell, left to right then top to bottom, in frame px."""
     x0, x1, y0, y1 = panel_box
     boxes = []
     for row in range(ROWS):
@@ -342,12 +328,17 @@ def fields_read(frame: np.ndarray, panel: Panel, glyphs: Glyphs) -> int:
 def field_reads(
     frames: Iterable[tuple[float, np.ndarray]], panel: Panel, glyphs: Glyphs
 ) -> dict[str, list[tuple[float, str | None]]]:
-    """Each field's (time, text) in every frame."""
-    boxes = value_boxes(panel.box)
+    """Each field's (time, text) in every frame, read from the cell the panel's layout has
+    it in. A field the layout does not have reads None."""
+    cells = dict(zip(panel.layout, value_boxes(panel.box), strict=True))
     reads: dict[str, list[tuple[float, str | None]]] = {f: [] for f in FIELDS}
     for t, frame in frames:
-        for field, (x0, x1, y0, y1) in zip(FIELDS, boxes, strict=True):
-            reads[field].append((t, read_cell(frame[y0:y1, x0:x1], field, glyphs)))
+        for field in FIELDS:
+            text = None
+            if field in cells:
+                x0, x1, y0, y1 = cells[field]
+                text = read_cell(frame[y0:y1, x0:x1], field, glyphs)
+            reads[field].append((t, text))
     return reads
 
 
