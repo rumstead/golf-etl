@@ -64,17 +64,27 @@ def test_session_md_grades_ball_flight_per_swing(tmp_path):
         BallFlight("ok", ball_px_per_frame=14.4, start_dir=-0.36, grade="poor"),
         BallFlight("lost: no ball launched"),
     ]
-    write_session_md(path, summary(swings=swings, balls=balls, ball_median=21.3))
+    s = summary(swings=swings, balls=balls, ball_median=21.3, strikes=[1.234, None])
+    write_session_md(path, s)
     text = path.read_text()
     assert (
         "Ball flight: 0 good, 0 fair, 1 poor, 1 not tracked (median ball speed 21.3 px/frame)"
         in text
     )
-    header = "| Swing | Impact | Strength | Hand speed peak | Ball px/frame | Start dir | Grade |"
-    assert f"{header} Track |" in text
-    assert "| swing-01 | 1:05.8 | 0.45 | +50ms | 14.4 | -0.36 | poor | ok |" in text
-    assert "| swing-02 | 15:14.3 | 0.38 | -83ms | | | | lost: no ball launched |" in text
-    assert "Ball px/frame" in text.split("| Swing |")[0]  # the guide explains the columns
+    header = "| Swing | Impact | Strength | Hand speed peak | Ball px/frame | Start dir | Strike |"
+    assert f"{header} Grade | Track |" in text
+    assert "| swing-01 | 1:05.8 | 0.45 | +50ms | 14.4 | -0.36 | 1.23 | poor | ok |" in text
+    assert "| swing-02 | 15:14.3 | 0.38 | -83ms | | | | | lost: no ball launched |" in text
+    guide = text.split("| Swing |")[0]  # the guide explains the columns
+    assert "Ball px/frame" in guide and "Strike is where the ball sat on the face" in guide
+
+
+def test_session_md_without_strikes_leaves_the_column_blank(tmp_path):
+    path = tmp_path / "session.md"
+    swings = [Swing(65.81, 0.45, 50.0, swing_track(65.81))]
+    balls = [BallFlight("ok", ball_px_per_frame=14.4, start_dir=-0.36, grade="poor")]
+    write_session_md(path, summary(swings=swings, balls=balls, ball_median=21.3))
+    assert "| swing-01 | 1:05.8 | 0.45 | +50ms | 14.4 | -0.36 | | poor | ok |" in path.read_text()
 
 
 def test_session_md_has_a_timing_table(tmp_path):

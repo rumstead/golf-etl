@@ -24,8 +24,9 @@ so those panels line up across swings. Transition and follow-through are the sam
 before and after impact on every swing. Every panel of a swing is the same crop of the frame \
 around the golfer, the club and the ball.
 - `05-impact-zoom.jpg` is the ball area at full resolution for the frames just before, at, \
-and after impact, top to bottom. Use it for contact and strike, and for shaft lean when the \
-camera is face-on.
+and after contact, top to bottom: contact is the last frame with the ball still on its spot. \
+Without a contact frame (face-on, or the ball not found) the rows are the frames around \
+impact instead. Use it for contact and strike, and for shaft lean when the camera is face-on.
 """
 
 _DRIVE_COPIES = """\
@@ -113,6 +114,11 @@ factor against the session median instead (good near the median or above, poor w
 with the thresholds in `ball.json`), a swing without a smash read has no grade, and the summary \
 line says which basis was used. \
 Start dir is sideways over up: negative starts left of the camera line, positive right. \
+Strike is where the ball sat on the face in the contact frame: the ball's center measured \
+from where the shaft's line meets the ball's row, in ball diameters, larger toward the toe. \
+The camera sees the face at a slant, so it ranks the swings of this session and is not \
+inches on the face. It is blank face-on, and when the shaft is not seen in the contact frame; \
+`strike.json` in each swing folder has the contact time and the points it was measured from. \
 A `lost:` track says why the ball could not be followed; on the px basis that swing has no \
 grade, and on the smash basis its grade still comes from the sim.
 """
@@ -170,6 +176,7 @@ SIM_COLUMNS = {
 
 
 TIMING_COLUMNS = {"Backswing s": "backswing_s", "Downswing s": "downswing_s", "Tempo": "tempo"}
+STRIKE_COLUMNS = {"Strike": "strike"}
 INDEX_COLUMNS = {
     "Club mph": "club_speed",
     "Ball mph": "ball_speed",
@@ -212,6 +219,8 @@ class SessionSummary:
     # one per swing, in order: `measures.body_measures` of the swing
     bodies: list[dict[str, float | str | None]] = field(default_factory=list)
     club: str = DEFAULT_CLUB  # "7 iron", "driver", or "mixed" for a session of several clubs
+    # one per swing, in order: ball diameters from the hosel toward the toe, None when not read
+    strikes: list[float | None] = field(default_factory=list)
 
 
 def video_time(t: float) -> str:
@@ -245,10 +254,11 @@ def write_session_md(path: Path, s: SessionSummary) -> None:
         lines += [guide_text + BALL_GUIDE, summary_line(s.balls, s.ball_median, s.grade_basis), ""]
         lines += [
             "| Swing | Impact | Strength | Hand speed peak "
-            "| Ball px/frame | Start dir | Grade | Track |",
-            "|---|---|---|---|---|---|---|---|",
+            "| Ball px/frame | Start dir | Strike | Grade | Track |",
+            "|---|---|---|---|---|---|---|---|---|",
         ]
-        for n, (swing, b) in enumerate(zip(s.swings, s.balls, strict=True), 1):
+        strikes = s.strikes or [None] * len(s.swings)
+        for n, (swing, b, strike) in enumerate(zip(s.swings, s.balls, strikes, strict=True), 1):
             cells = [
                 f"swing-{n:02d}",
                 video_time(swing.impact_s),
@@ -256,6 +266,7 @@ def write_session_md(path: Path, s: SessionSummary) -> None:
                 f"{swing.peak_offset_ms:+.0f}ms",
                 _cell(b.ball_px_per_frame, ".1f"),
                 _cell(b.start_dir, ".2f"),
+                _cell(strike, ".2f"),
                 b.grade or "",
                 b.track,
             ]
@@ -319,7 +330,7 @@ def write_session_md(path: Path, s: SessionSummary) -> None:
                 "| Measure | " + " | ".join(f"{g} ({n})" for g, n in counts.items()) + " |",
                 "|---" * (len(counts) + 1) + "|",
             ]
-            for name, key in (SIM_COLUMNS | TIMING_COLUMNS | BODY_COLUMNS).items():
+            for name, key in (SIM_COLUMNS | STRIKE_COLUMNS | TIMING_COLUMNS | BODY_COLUMNS).items():
                 cells = [_number(key, means[key][g]) for g in counts] if key in means else []
                 if any(cells):
                     lines.append(f"| {name} | " + " | ".join(cells) + " |")
@@ -378,7 +389,7 @@ def write_index(sessions: Path, marker: str) -> None:
 
 
 def _numbers(s: SessionSummary, some: bool = False) -> dict[str, list[float | None]]:
-    """Every sim, timing and body number by key, one value per swing in swing order. With
+    """Every sim, timing, body and strike number by key, one value per swing in swing order. With
     `some`, only the values that are there, and only the keys that have any."""
     rows: dict[str, list[float | None]] = {}
     for key in SIM_COLUMNS.values():
@@ -390,6 +401,7 @@ def _numbers(s: SessionSummary, some: bool = False) -> dict[str, list[float | No
         rows[key] = [getattr(t, key) if t else None for t in timed]
     for key in BODY_COLUMNS.values():
         rows[key] = [body.get(key) for body in s.bodies]
+    rows["strike"] = list(s.strikes)
     if not some:
         return {k: v for k, v in rows.items() if v}
     found = {k: [x for x in v if x is not None] for k, v in rows.items()}

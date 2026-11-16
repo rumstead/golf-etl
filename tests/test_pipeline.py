@@ -42,6 +42,7 @@ EXPECTED = [
     "ball.json",
     "clip.mp4",
     "pose.csv",
+    "strike.json",
 ]
 
 

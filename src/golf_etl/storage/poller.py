@@ -124,7 +124,12 @@ class Poller:
         else:
             # Published: a failure saving state from here on must not send the video to retry.
             self.report.published.append(result.session_id)
-            log.info("published %s with %d swings", result.session_id, result.swings)
+            log.info(
+                "published %s with %d swings, strike read on %d",
+                result.session_id,
+                result.swings,
+                result.strikes,
+            )
             self.state.attempts.pop(checksum, None)
             self.state.note(
                 video.name, checksum, "published", datetime.now(UTC), session=result.session_id

@@ -77,7 +77,10 @@ def cmd_process(args, cfg: Settings) -> int:
         uploaded_at=mtime,
         club=CLUBS[args.club] if args.club else club,
     )
-    print(f"{result.session_dir}: {result.swings} swings, {len(result.rejected)} rejected")
+    print(
+        f"{result.session_dir}: {result.swings} swings, {len(result.rejected)} rejected, "
+        f"strike read on {result.strikes} of {result.swings}"
+    )
     return 0
 
 
