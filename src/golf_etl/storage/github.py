@@ -12,7 +12,7 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 
-from golf_etl.chain import CHAIN, write_chain
+from golf_etl.chain import CHAIN, LABELS, write_chain
 from golf_etl.session import INDEX, SUMMARY, write_index
 from golf_etl.storage.retention import SweepReport
 from golf_etl.storage.store import MARKER, SESSIONS
@@ -55,7 +55,8 @@ class GitHubPublisher:
 
     def _checkout(self, session_id: str) -> bool:
         """Clone into an empty work dir with only this session checked out, plus the index,
-        chain.md, and what they are built from: every session's summary and marker.
+        chain.md, and what they are built from: every session's summary and marker, and the
+        takeaway labels.
 
         False when the remote has no branch yet; the work dir is then on an unborn branch.
         """
@@ -63,7 +64,7 @@ class GitHubPublisher:
         self.work.mkdir(parents=True)
         self._git("init", "-b", self.branch)
         self._git("remote", "add", "origin", self.remote)
-        index = [f"/{SESSIONS}/{INDEX}", f"/{SESSIONS}/{CHAIN}"]
+        index = [f"/{SESSIONS}/{INDEX}", f"/{SESSIONS}/{CHAIN}", f"/{SESSIONS}/{LABELS}"]
         index += [f"/{SESSIONS}/*/{SUMMARY}", f"/{SESSIONS}/*/{MARKER}"]
         self._git("sparse-checkout", "set", "--no-cone", f"/{SESSIONS}/{session_id}/", *index)
         fetch = self._git(

@@ -1,6 +1,6 @@
 import json
 
-from golf_etl.chain import CHAIN, write_chain
+from golf_etl.chain import CHAIN, LABELS, read_labels, write_chain
 
 DTL = "down the line"
 
@@ -129,3 +129,96 @@ def test_ten_swings_read_without_the_too_few_mark(tmp_path):
     swings = [swing(n, strike=1.0 + n / 10, head_impact_up=n) for n in range(1, 11)]
     add_session(tmp_path, "s1", swings)
     assert "| Head impact up |  |  | +1.00 | 10 | 1 |" in chain(tmp_path)
+
+
+def labeled_session(root, name="s1"):
+    """Four swings whose posture and strike split two and two."""
+    swings = [
+        swing(
+            n,
+            grade="good" if n < 3 else "poor",
+            strike=s,
+            spine_address=36.0,
+            spine_impact=36.0 - s,
+        )
+        for n, s in enumerate([1.0, 1.1, 2.0, 2.2], 1)
+    ]
+    add_session(root, name, swings)
+
+
+def write_labels(root, text):
+    (root / LABELS).write_text("session,swing,label,side,by,date,position\n" + text)
+
+
+def test_labels_split_the_second_table_by_takeaway(tmp_path):
+    # good swings anchor strike at 1.05; unlabeled swings never count as hanging
+    labeled_session(tmp_path)
+    write_labels(
+        tmp_path, "s1,1,hanging,,owner,2026-11-16\ns1,swing-02,Set,inside,owner,2026-11-16\n"
+    )
+    takeaways = ("| hanging", "| level", "| not labeled")
+    rows = [line for line in chain(tmp_path).splitlines() if line.startswith(takeaways)]
+    assert rows[:6] == [  # then the same from 2026-10-31 on
+        "| hanging | kept | 1 (too few) | 1 (too few) |  | -0.05 |",
+        "| hanging | lost |  |  |  |  |",
+        "| level or set | kept | 1 (too few) | 1 (too few) |  | +0.05 |",
+        "| level or set | lost |  |  |  |  |",
+        "| not labeled | kept |  |  |  |  |",
+        "| not labeled | lost | 2 (too few) |  | 2 (too few) | +1.05 |",
+    ]
+
+
+def test_unreadable_swings_count_with_the_unlabeled(tmp_path):
+    labeled_session(tmp_path)
+    write_labels(tmp_path, "s1,3,unreadable,,owner,2026-11-16\n")
+    assert "| not labeled | lost | 2 (too few) |" in chain(tmp_path)
+
+
+def test_label_rows_that_cannot_be_used_are_named(tmp_path):
+    labeled_session(tmp_path)
+    write_labels(tmp_path, "s1,1,cupped,,owner,2026-11-16\ns1,x,set,,owner,2026-11-16\n")
+    text = chain(tmp_path)
+    assert (
+        "Rows of takeaway-labels.csv not used: line 2 (label 'cupped'), line 3 (swing 'x')." in text
+    )
+
+
+def test_a_later_label_for_the_same_swing_wins(tmp_path):
+    labels, unused = read_labels(
+        _labels_file(tmp_path, "s1,1,set,,a,2026-11-16\ns1,1,hanging,,b,2026-11-17\n")
+    )
+    assert labels == {("s1", 1, "takeaway"): "hanging"} and unused == []
+
+
+def _labels_file(root, text):
+    write_labels(root, text)
+    return root / LABELS
+
+
+def test_swing_order_shows_warm_up(tmp_path):
+    swings = [swing(n, strike=1.0, ball_speed=90.0 + n) for n in range(1, 6)]
+    add_session(tmp_path, "s1", swings)
+    assert "| Swing order | +1.00 | 5 (too few) |" in chain(tmp_path)
+
+
+def test_takeaway_and_halfway_labels_rank_against_ball_speed(tmp_path):
+    swings = [
+        swing(n, strike=1.0, ball_speed=s) for n, s in enumerate([90.0, 95.0, 100.0, 104.0], 1)
+    ]
+    add_session(tmp_path, "s1", swings)
+    write_labels(
+        tmp_path,
+        "s1,1,hanging,,owner,2026-11-16\ns1,2,hanging,,owner,2026-11-16\n"
+        "s1,3,set,,owner,2026-11-16\ns1,4,level,,owner,2026-11-16\n",
+    )
+    with (tmp_path / LABELS).open("a") as fh:
+        for n, label in ((1, "set"), (3, "hanging"), (4, "hanging")):
+            fh.write(f"s1,{n},{label},,owner,2026-11-16,halfway\n")
+    text = chain(tmp_path)
+    assert "| Takeaway level or set | +0.89 | 4 (too few) |" in text
+    assert "| Halfway level or set | -0.87 | 3 (too few) |" in text
+
+
+def test_a_position_that_is_not_takeaway_or_halfway_is_not_used(tmp_path):
+    labels, unused = read_labels(_labels_file(tmp_path, "s1,1,set,,a,2026-11-16,top\n"))
+    assert labels == {} and unused == ["line 2 (position 'top')"]

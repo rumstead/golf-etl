@@ -401,9 +401,11 @@ def test_index_skips_a_folder_that_is_not_a_session(tmp_path):
 def test_session_summary_keeps_every_swing_number():
     sims = [_shot(smash="1.40", club_path="3.0 I-O"), None]
     bodies = [_body(spine_address=36.81234), _body(view="face-on")]
-    rows = session_summary(_graded(["good", None], sims=sims, bodies=bodies))["per_swing"]
+    summary = _graded(["good", None], sims=sims, bodies=bodies, strikes=[1.23456, None])
+    rows = session_summary(summary)["per_swing"]
     assert (
         rows[0]["swing"] == 1 and rows[0]["grade"] == "good" and rows[0]["view"] == "down the line"
     )
     assert (rows[0]["smash"], rows[0]["club_path"], rows[0]["spine_address"]) == (1.4, 3.0, 36.8123)
     assert rows[1]["grade"] is None and rows[1]["view"] == "face-on" and rows[1]["smash"] is None
+    assert rows[0]["strike"] == 1.2346 and rows[1]["strike"] is None
