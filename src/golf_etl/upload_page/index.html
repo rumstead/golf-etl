@@ -17,10 +17,19 @@
   li { padding: 8px 0; border-bottom: 1px solid rgba(128, 128, 128, 0.3); overflow-wrap: anywhere; }
   li span { display: block; font-size: 0.9rem; opacity: 0.8; }
   progress { width: 100%; height: 12px; }
+  .club { display: block; margin: 0 0 12px; font-weight: 600; }
+  .club select { font: inherit; margin-left: 8px; }
 </style>
 </head>
 <body>
 <h1>Golf upload</h1>
+<label class="club">Club
+  <select id="club">
+    <option value="7iron" selected>7 iron</option>
+    <option value="driver">Driver</option>
+    <option value="mixed">Mixed</option>
+  </select>
+</label>
 <label class="pick">Choose swing videos
   <input id="pick" type="file" accept="video/*" multiple>
 </label>
@@ -47,7 +56,7 @@
   // one upload at a time, so the first video finishes as soon as it can
   let queue = Promise.resolve();
 
-  function send(file) {
+  function send(file, club) {
     const span = row(document.getElementById("files"), file.name, "queued");
     const bar = document.createElement("progress");
     bar.max = 100;
@@ -58,7 +67,7 @@
         endpoint: "/files/",
         chunkSize: 50 * 1024 * 1024,
         retryDelays: [0, 3000, 10000, 30000, 60000],
-        metadata: { filename: file.name, filetype: file.type },
+        metadata: { filename: file.name, filetype: file.type, club },
         removeFingerprintOnSuccess: true,
         onProgress(sent, total) {
           bar.value = Math.floor((sent / total) * 100);
@@ -82,7 +91,9 @@
   }
 
   document.getElementById("pick").addEventListener("change", (event) => {
-    for (const file of event.target.files) send(file);
+    // the club picked when the videos are chosen goes with them
+    const club = document.getElementById("club").value;
+    for (const file of event.target.files) send(file, club);
     event.target.value = "";
   });
 

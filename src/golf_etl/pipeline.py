@@ -23,6 +23,7 @@ from golf_etl.ball import (
     track_ball,
     write_ball_json,
 )
+from golf_etl.club import DEFAULT as DEFAULT_CLUB
 from golf_etl.config import Settings
 from golf_etl.detect import (
     Detection,
@@ -212,6 +213,7 @@ def process_video(
     duplicates: list[str] | None = None,
     version: str = "dev",
     detect: Detector = detect_video,
+    club: str = DEFAULT_CLUB,
 ) -> SessionResult:
     info = probe(video)
     detection = detect(video, info, cfg)
@@ -273,6 +275,7 @@ def process_video(
         venue=venue,
         grade_basis=basis,
         bodies=bodies,
+        club=club,
     )
     write_session_md(session_dir / "session.md", summary)
     write_summary_json(session_dir / SUMMARY, summary)

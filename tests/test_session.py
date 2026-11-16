@@ -246,6 +246,13 @@ def test_session_md_names_the_venue(tmp_path):
     assert lines.index("- Venue: sim") == lines.index("- Swings: 0") + 1
 
 
+def test_session_md_and_summary_name_the_club(tmp_path):
+    write_session_md(tmp_path / "session.md", summary(club="mixed"))
+    lines = (tmp_path / "session.md").read_text().splitlines()
+    assert lines.index("- Club: mixed") == lines.index("- Venue: range") + 1
+    assert session_summary(summary())["club"] == "7 iron"
+
+
 def test_session_md_with_no_swings_is_a_range_session(tmp_path):
     write_session_md(tmp_path / "session.md", summary())
     assert "- Venue: range" in (tmp_path / "session.md").read_text()

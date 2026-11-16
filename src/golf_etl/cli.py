@@ -10,6 +10,7 @@ from pathlib import Path
 
 import yaml
 
+from golf_etl.club import CLUBS, from_name
 from golf_etl.config import Settings
 
 log = logging.getLogger("golf_etl")
@@ -21,6 +22,12 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("process", help="process a local video without Drive")
     p.add_argument("video", type=Path)
     p.add_argument("--out", type=Path, default=Path("out"))
+    p.add_argument(
+        "--club",
+        choices=list(CLUBS),
+        help="the club the session was hit with; by default the tag in the video's name "
+        "(IMG_4881.mixed.MOV), else a 7 iron",
+    )
     e = sub.add_parser("eval", help="score detection against labeled impact times")
     e.add_argument("labels", type=Path)
     sub.add_parser("poll", aliases=["poll-drive"], help="process everything in the inbox once")
@@ -60,8 +67,15 @@ def cmd_process(args, cfg: Settings) -> int:
     with args.video.open("rb") as fh:
         checksum = hashlib.file_digest(fh, "sha256").hexdigest()
     mtime = datetime.fromtimestamp(args.video.stat().st_mtime, UTC)
+    source_name, club = from_name(args.video.name)
     result = process_video(
-        args.video, args.out, cfg, source_name=args.video.name, checksum=checksum, uploaded_at=mtime
+        args.video,
+        args.out,
+        cfg,
+        source_name=source_name,
+        checksum=checksum,
+        uploaded_at=mtime,
+        club=CLUBS[args.club] if args.club else club,
     )
     print(f"{result.session_dir}: {result.swings} swings, {len(result.rejected)} rejected")
     return 0

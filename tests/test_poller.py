@@ -22,9 +22,11 @@ class FakeProcess:
         self.fail_on: set[str] = set()
 
     def __call__(
-        self, video: Path, out_root: Path, *, source_name, checksum, uploaded_at, duplicates
+        self, video: Path, out_root: Path, *, source_name, checksum, uploaded_at, duplicates, club
     ):
-        self.calls.append({"name": source_name, "checksum": checksum, "duplicates": duplicates})
+        self.calls.append(
+            {"name": source_name, "checksum": checksum, "duplicates": duplicates, "club": club}
+        )
         if source_name in self.fail_on:
             raise RuntimeError(f"cannot decode {source_name}")
         sid = f"2026-10-04-1200-{checksum[:8]}"
@@ -90,6 +92,19 @@ def test_session_folder_has_a_marker_with_the_checksum(env):
     assert marker["sourceName"] == "IMG_1.MOV"
     assert marker["pipelineVersion"] == "test"
     assert marker["venue"] == "sim"
+
+
+def test_club_tag_reaches_the_processor_and_leaves_the_source_name(env):
+    store, process, run = env
+    store.add_video("IMG_4881.mixed.MOV", data=b"holes")
+    store.add_video("IMG_4877.MOV", data=b"range")
+    run()
+    calls = sorted((c["name"], c["club"]) for c in process.calls)
+    assert calls == [("IMG_4877.MOV", "7 iron"), ("IMG_4881.MOV", "mixed")]
+    markers = [
+        json.loads(store.read_text(f"sessions/{sid}/.golf-etl.json")) for sid in sessions(store)
+    ]
+    assert {m["sourceName"] for m in markers} == {"IMG_4877.MOV", "IMG_4881.MOV"}
 
 
 def test_non_video_files_are_left_alone(env):

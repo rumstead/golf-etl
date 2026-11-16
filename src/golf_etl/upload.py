@@ -17,6 +17,7 @@ from importlib.resources import files
 from pathlib import Path, PurePosixPath
 from stat import S_ISREG
 
+from golf_etl.club import CLUBS
 from golf_etl.config import Settings
 from golf_etl.storage.store import FAILED, INBOX, PROCESSING, STATE, VIDEO_SUFFIXES
 
@@ -43,11 +44,12 @@ def _is_video(name: str) -> bool:
     return PurePosixPath(name).suffix.lower() in VIDEO_SUFFIXES
 
 
-def finish_upload(upload: Path, filename: str, inbox: Path) -> Path | None:
+def finish_upload(upload: Path, filename: str, inbox: Path, club: str | None = None) -> Path | None:
     """Move a finished tusd upload into inbox and remove its .info.
 
-    The name is safe_name(filename), with .mov added when it is not a video and -2, -3 before
-    the suffix when inbox/, processing/, or failed/ next to it already has that name.
+    The name is safe_name(filename), with .mov added when it is not a video, the club tag
+    before the suffix when `club` is not a 7 iron (`IMG_4881.mixed.MOV`), and -2, -3 before
+    those when inbox/, processing/, or failed/ next to it already has that name.
 
     Returns the new path, or None when the upload was already finished and its data is gone.
     """
@@ -58,6 +60,8 @@ def finish_upload(upload: Path, filename: str, inbox: Path) -> Path | None:
             return None
         name = safe_name(filename)
         stem, suffix = (name, ".mov") if not _is_video(name) else os.path.splitext(name)
+        if club in CLUBS and club != "7iron":
+            suffix = f".{club}{suffix}"
         inbox.mkdir(parents=True, exist_ok=True)
         # the poller moves a retried video from processing/ back to inbox/ under its name
         folders = [inbox, inbox.parent / PROCESSING, inbox.parent / FAILED]
@@ -88,6 +92,10 @@ def _filename(info: dict) -> str:
     return (info.get("MetaData") or {}).get("filename", "")
 
 
+def _club(info: dict) -> str | None:
+    return (info.get("MetaData") or {}).get("club")
+
+
 def sweep_uploads(upload_dir: Path, inbox: Path, now: datetime, ttl: timedelta) -> list[str]:
     """Finish complete uploads whose hook was missed, delete unfinished ones older than ttl."""
     done = []
@@ -97,7 +105,7 @@ def sweep_uploads(upload_dir: Path, inbox: Path, now: datetime, ttl: timedelta) 
                 continue
             name = _filename(info)
             if stat.st_size == info.get("Size"):
-                if finish_upload(data, name, inbox):
+                if finish_upload(data, name, inbox, _club(info)):
                     done.append(name)
             elif now - datetime.fromtimestamp(stat.st_mtime, UTC) > ttl:
                 data.unlink(missing_ok=True)
@@ -143,6 +151,11 @@ def hook_response(payload: dict, cfg: Settings) -> dict:
                 "RejectUpload": True,
                 "HTTPResponse": {"StatusCode": 400, "Body": "only videos"},
             }
+        if _club(upload) not in (None, *CLUBS):
+            return {
+                "RejectUpload": True,
+                "HTTPResponse": {"StatusCode": 400, "Body": "unknown club"},
+            }
     elif payload.get("Type") == "post-finish":
         path = (upload.get("Storage") or {}).get("Path")
         if path:
@@ -150,7 +163,7 @@ def hook_response(payload: dict, cfg: Settings) -> dict:
             if data.resolve().parent != Path(cfg.upload_dir).resolve():
                 log.warning("upload: ignoring %s outside %s", path, cfg.upload_dir)
             else:
-                finish_upload(data, filename, Path(cfg.inbox_root) / INBOX)
+                finish_upload(data, filename, Path(cfg.inbox_root) / INBOX, _club(upload))
     return {}
 
 
