@@ -36,6 +36,7 @@ class Positions:
     finish_s: float
     top_in_frame: bool = True  # False when the hands are not seen around the top
     start_from_club: bool = False  # the takeaway start is the club leaving the ball
+    still_from_s: float | None = None  # start of the still stretch address ends; None without one
 
     def sequence(self) -> list[tuple[str, float]]:
         """Eight positions for the sequence sheet."""
@@ -107,9 +108,8 @@ def pick_positions(
     else:
         top_s = max(start, impact_s - 0.8)
 
-    address_s = _last_still_before(times, speed, top_s, still_speed)
-    if address_s is None:
-        address_s = max(start, top_s - 1.0)
+    still = _last_still_before(times, speed, top_s, still_speed)
+    still_from_s, address_s = still if still else (None, max(start, top_s - 1.0))
 
     after = (times >= impact_s + FINISH_AFTER_S) & ~np.isnan(height)
     finish_s = float(times[after][int(np.argmax(height[after]))]) if after.any() else end
@@ -140,6 +140,7 @@ def pick_positions(
         max(min(impact_s + follow_through_s, finish_s), impact_s),
         finish_s,
         top_in_frame,
+        still_from_s=still_from_s,
     )
 
 
@@ -237,8 +238,8 @@ def _first_above(
 
 def _last_still_before(
     times: np.ndarray, speed: np.ndarray, before_s: float, still_speed: float
-) -> float | None:
-    """End of the last run of still samples lasting STILL_MIN_S, before before_s."""
+) -> tuple[float, float] | None:
+    """Start and end of the last run of still samples lasting STILL_MIN_S, before before_s."""
     still = (speed < still_speed) & (times < before_s)
     run_start = None
     best = None
@@ -246,7 +247,7 @@ def _last_still_before(
         if is_still:
             run_start = t if run_start is None else run_start
             if t - run_start >= STILL_MIN_S:
-                best = float(t)
+                best = (float(run_start), float(t))
         else:
             run_start = None
     return best

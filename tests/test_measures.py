@@ -7,10 +7,12 @@ from golf_etl.pose import (
     LEFT_FOOT_INDEX,
     LEFT_HEEL,
     LEFT_HIP,
+    LEFT_SHOULDER,
     LEFT_WRIST,
     RIGHT_FOOT_INDEX,
     RIGHT_HEEL,
     RIGHT_HIP,
+    RIGHT_SHOULDER,
     RIGHT_WRIST,
 )
 from tests.poses import swing_track
@@ -39,6 +41,15 @@ def test_a_still_body_measures_zero():
     assert body["head_top_side"] == body["head_impact_up"] == body["hips_impact_side"] == 0
     assert body["spine_address"] == pytest.approx(0)  # shoulders straight over the hips
     assert body["hands_top"] == pytest.approx((0.3 - 0.2) / LEG, abs=0.02)
+
+
+def test_address_is_the_still_stretch_not_its_last_moment():
+    track, p = _swing()
+    assert p.still_from_s is not None and p.address_s - p.still_from_s > 0.5
+    # the shoulders start turning toward the ball in the last 0.1s of the still stretch
+    turning = (track.times > p.address_s - 0.1) & (track.times <= p.address_s)
+    track.landmarks[np.ix_(turning, [LEFT_SHOULDER, RIGHT_SHOULDER], [0])] += 0.05
+    assert body_measures(track, p)["spine_address"] == pytest.approx(0)
 
 
 def test_moves_are_in_leg_lengths_toward_the_ball_and_up():

@@ -40,12 +40,15 @@ VIEWS = {1: "down the line", -1: "down the line", 0: "face-on"}
 def body_measures(track: PoseTrack, p: Positions) -> dict[str, float | str | None]:
     """How the head, hips and hands moved from address, the hands' height over the shoulders
     at the top, and the spine's lean at address and impact, each None when its joints are not
-    seen. Moves are in leg lengths, so they do not depend on where the phone is.
+    seen. Moves are in leg lengths, so they do not depend on where the phone is. Address is
+    the median pose over the still stretch before the takeaway: the shoulders start turning
+    as the hands start moving, and the spine angle changes a few degrees within 0.2s of it.
 
     `view` is which way the feet point. Down the line, side is toward the ball and the spine
     angle is the bend toward it. Face-on, side is to the right of the picture and the spine
     angle is the tilt that way."""
-    address, top, impact = (_pose(track, t) for t in (p.address_s, p.top_s, p.impact_s))
+    address = _still_pose(track, p.still_from_s, p.address_s)
+    top, impact = (_pose(track, t) for t in (p.top_s, p.impact_s))
     toes = toes_direction(address, track.aspect)
     out: dict[str, float | str | None] = dict.fromkeys(BODY_COLUMNS.values())
     out["view"] = VIEWS.get(toes)
@@ -101,6 +104,17 @@ def by_grade(
             mine = [v for v in mine if v is not None]
             means[name][g] = sum(mine) / len(mine) if mine else None
     return counts, means
+
+
+def _still_pose(track: PoseTrack, from_s: float | None, to_s: float) -> np.ndarray:
+    """Landmarks (33, 3), the median of the samples from from_s to to_s, or the pose at to_s
+    without a still stretch."""
+    if from_s is None:
+        return _pose(track, to_s)
+    still = (track.times >= from_s) & (track.times <= to_s)
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", RuntimeWarning)  # a joint missing in every sample
+        return np.nanmedian(track.landmarks[still], axis=0)
 
 
 def _pose(track: PoseTrack, t: float) -> np.ndarray:
