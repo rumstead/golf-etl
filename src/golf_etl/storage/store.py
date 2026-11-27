@@ -1,6 +1,6 @@
-"""A folder tree addressed by path: the inbox, and in drive mode the sessions too.
+"""A folder tree addressed by path: the inbox.
 
-RcloneStore implements it on a Drive remote or a local folder; tests use an in-memory fake.
+LocalStore implements it on a local folder; tests use an in-memory fake.
 """
 
 import json
@@ -48,16 +48,11 @@ class Store(Protocol):
     def mkdir(self, folder: str) -> None: ...
     def move(self, src: str, dst: str) -> None: ...
     def download(self, src: str, dest: Path) -> None: ...
-    def upload_tree(self, src: Path, dst: str) -> None: ...
     def read_text(self, path: str) -> str | None: ...
     def write_text(self, path: str, text: str) -> None: ...
 
     def delete(self, path: str) -> None:
-        """Permanent delete, skipping trash. Folders take their contents with them."""
-        ...
-
-    def dedupe(self, folder: str) -> None:
-        """Rename files that share a name in folder, which Drive allows and paths cannot address."""
+        """Folders take their contents with them."""
         ...
 
 

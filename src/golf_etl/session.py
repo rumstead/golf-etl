@@ -29,12 +29,6 @@ Without a contact frame (face-on, or the ball not found) the rows are the frames
 impact instead. Use it for contact and strike, and for shaft lean when the camera is face-on.
 """
 
-_DRIVE_COPIES = """\
-- `06-sequence-small.jpg`, `05-impact-zoom-small.jpg`, and `07-after-shot-small.jpg` are \
-the same images under 72KB, small enough to read through the Drive connector. Use them when \
-the full-size image does not open.
-"""
-
 _AFTER_SHOT = """\
 - `07-after-shot.jpg` is a full-resolution frame about 13s after impact, or earlier when the \
 next swing starts sooner. On a simulator \
@@ -52,8 +46,6 @@ any other frame belong to the previous shot.
 - `sim.json` in each swing folder is that swing's Sim table row with each number's vote count \
 and when it first showed, and `"unchanged": true` when the screen did not change after the swing.
 """
-
-_DRIVE_CLIP = "- `clip.mp4` is the swing as video.\n"
 
 _POSE = """\
 - `pose.csv` is the pose estimate as numbers, one row per sample (up to 60 a second): time in \
@@ -79,19 +71,10 @@ clubs, so its swings do not compare with each other.
 """
 
 
-def guide(storage: str, sim: bool = False) -> str:
+def guide(sim: bool = False) -> str:
     """The reading guide for what the publisher leaves in the session folder; `sim` when the
     swings have a Sim table row and `sim.json`."""
     after_shot = _AFTER_SHOT_SIM if sim else _AFTER_SHOT
-    if storage == "drive":
-        return (
-            _GUIDE_INTRO
-            + _DRIVE_COPIES
-            + after_shot
-            + _DRIVE_CLIP
-            + _POSE.format(frame="the nearest `clip.mp4` frame", numbers="`clip.mp4` frame numbers")
-            + _VENUE
-        )
     return (
         _GUIDE_INTRO
         + after_shot
@@ -213,7 +196,6 @@ class SessionSummary:
     timings: list[Timing] = field(default_factory=list)  # one per swing, in order
     # one per swing, None when its read failed; empty when the video shows no readout panel
     sims: list[SimShot | None] = field(default_factory=list)
-    storage: str = "github"
     venue: str = "range"  # "sim" when the readout panel was found in the video
     grade_basis: str = "ball_px"  # "sim_smash" when the grades come from the sim's smash factor
     # one per swing, in order: `measures.body_measures` of the swing
@@ -250,7 +232,7 @@ def write_session_md(path: Path, s: SessionSummary) -> None:
         "",
     ]
     if s.swings and s.balls:
-        guide_text = guide(s.storage, bool(s.sims)) + (BODY_GUIDE if s.bodies else "")
+        guide_text = guide(bool(s.sims)) + (BODY_GUIDE if s.bodies else "")
         lines += [guide_text + BALL_GUIDE, summary_line(s.balls, s.ball_median, s.grade_basis), ""]
         lines += [
             "| Swing | Impact | Strength | Hand speed peak "
@@ -272,7 +254,7 @@ def write_session_md(path: Path, s: SessionSummary) -> None:
             ]
             lines.append("|" + "|".join(f" {c} " if c else " " for c in cells) + "|")
     elif s.swings:
-        lines += [guide(s.storage, bool(s.sims))]
+        lines += [guide(bool(s.sims))]
         lines += ["| Swing | Impact | Strength | Hand speed peak |", "|---|---|---|---|"]
         for n, swing in enumerate(s.swings, 1):
             lines.append(

@@ -1,15 +1,12 @@
-"""In-memory Store for poller and retention tests, addressed by path like RcloneStore.
-
-Like real Drive it allows two files with the same name in a folder; any operation on such an
-ambiguous path fails until dedupe() renames them.
-"""
+"""In-memory Store for poller and retention tests, addressed by path like LocalStore."""
 
 import hashlib
+import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 
-from golf_etl.storage.store import Entry
+from golf_etl.storage.store import MARKER, Entry
 
 
 @dataclass
@@ -105,15 +102,6 @@ class FakeStore:
     def download(self, src, dest: Path):
         dest.write_bytes(self._file(src).data)
 
-    def upload_tree(self, src: Path, dst):
-        self.mkdir(dst)
-        for p in sorted(src.rglob("*")):
-            rel = f"{dst}/{p.relative_to(src).as_posix()}"
-            if p.is_dir():
-                self.mkdir(rel)
-            else:
-                self.add(rel, p.read_bytes(), self.now)
-
     def read_text(self, path):
         matches = [f for f in self.files if f.path == path]
         return matches[0].data.decode() if matches else None
@@ -133,13 +121,25 @@ class FakeStore:
         self.deleted.append(PurePosixPath(path).name)
         self.files.remove(f)
 
-    def dedupe(self, folder):
-        by_path: dict[str, list[FakeFile]] = {}
-        for f in self.files:
-            if _parent(f.path) == folder:
-                by_path.setdefault(f.path, []).append(f)
-        for path, group in by_path.items():
-            if len(group) > 1:
-                p = PurePosixPath(path)
-                for i, f in enumerate(group, 1):
-                    f.path = str(p.with_name(f"{p.stem}-{i}{p.suffix}"))
+
+class FakePublisher:
+    """Puts each session in the store's sessions/ folder, replacing an earlier one."""
+
+    def __init__(self, store: FakeStore):
+        self.store = store
+
+    def publish(self, session_dir: Path, session_id: str, marker: dict) -> None:
+        dest = f"sessions/{session_id}"
+        if self.store._is_dir(dest):
+            self.store.delete(dest)
+        self.store.mkdir(dest)
+        for p in sorted(session_dir.rglob("*")):
+            rel = f"{dest}/{p.relative_to(session_dir).as_posix()}"
+            if p.is_dir():
+                self.store.mkdir(rel)
+            else:
+                self.store.add(rel, p.read_bytes(), self.store.now)
+        self.store.write_text(f"{dest}/{MARKER}", json.dumps(marker))
+
+    def sweep(self, now):
+        raise AssertionError("the poller does not sweep")

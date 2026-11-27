@@ -12,7 +12,6 @@ Every setting in `src/golf_etl/config.py` can be overridden with `GOLF_<NAME>`.
 
 | Variable | Default | |
 |---|---|---|
-| `GOLF_STORAGE` | `github` | `github` or `drive` |
 | `GOLF_INBOX_ROOT` | `/data` | the root folder, holding `inbox/`, `processing/`, `failed/` and `.golf-etl/state.json` |
 | `GOLF_SESSIONS_REPO` | `git@github.com:rumstead/golf-sessions.git` | where sessions are pushed |
 | `GOLF_SSH_KEY_PATH` | `/etc/golf-etl/ssh/id_ed25519` | deploy key with write access to the repo |
@@ -64,21 +63,3 @@ podman run --rm --user root -v "$PWD/local":/w:Z golf-etl eval /w/labels.yaml
 ```
 
 Thresholds are environment variables (`GOLF_ONSET_DELTA`, `GOLF_IMPACT_AUDIO_LAG_MS`, ...); see `src/golf_etl/config.py`.
-
-## Drive mode
-`GOLF_STORAGE=drive` keeps the Drive inbox `golf/inbox` and Drive sessions in `golf/sessions/`. Each swing also has a short `clip.mp4`, and the sequence sheet, impact zoom, and after-shot frame have copies under 72KB that the claude.ai Drive connector can open. Sessions expire after 60 days, clips after 14, and the oldest sessions go when they total over 3GiB (`GOLF_SESSION_TTL_DAYS`, `GOLF_CLIP_TTL_DAYS`, `GOLF_MAX_BYTES`). The pipeline reaches Drive through rclone.
-
-1. On any machine with rclone and a browser, run `rclone authorize "drive"`, approve, and copy the JSON token it prints.
-2. Put these in a `drive.env` (homelab keeps them in a SOPS secret). `--env-file` takes each line as is, so no quotes around the token:
-   ```
-   RCLONE_CONFIG_GDRIVE_TYPE=drive
-   RCLONE_CONFIG_GDRIVE_SCOPE=drive
-   RCLONE_CONFIG_GDRIVE_TOKEN={"access_token":...,"refresh_token":...}
-   RCLONE_DRIVE_USE_TRASH=false
-   ```
-3. Run one poll by hand:
-   ```sh
-   podman run --rm --env-file drive.env -e GOLF_STORAGE=drive -e GOLF_SCRATCH_DIR=/tmp/scratch golf-etl poll
-   ```
-
-To move the sessions in Drive to GitHub, run `golf-etl migrate-drive --dry-run`, then without the flag. It needs both the Drive environment above and the deploy key, refuses while anything is in the Drive `inbox/`, `processing/` or `failed/`, and deletes a session from Drive only after the push has every file at the same size.

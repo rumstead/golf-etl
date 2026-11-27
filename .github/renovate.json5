@@ -1,9 +1,8 @@
 {
   // Renovate configuration for golf-etl.
   // Covers: pip requirements, the Python base image in the Dockerfile, GitHub
-  // Actions in the CI workflow, the rclone release pinned in the Dockerfile, and
-  // the tus-js-client version pinned in the upload page. The pose model URL in the
-  // Dockerfile is pinned by hand.
+  // Actions in the CI workflow, and the tus-js-client version pinned in the upload page.
+  // The pose model URL in the Dockerfile is pinned by hand.
   $schema: 'https://docs.renovatebot.com/renovate-schema.json',
   extends: [
     'config:recommended',
@@ -52,14 +51,6 @@
   ],
 
   customManagers: [
-    {
-      // ARG GOLF_RCLONE_VERSION=v1.75.1 in the Dockerfile
-      customType: 'regex',
-      managerFilePatterns: ['/^Dockerfile$/'],
-      matchStrings: ['ARG GOLF_RCLONE_VERSION=(?<currentValue>v\\d+\\.\\d+\\.\\d+)'],
-      depNameTemplate: 'rclone/rclone',
-      datasourceTemplate: 'github-releases',
-    },
     {
       // tus-js-client@4.3.1 in the upload page
       customType: 'regex',

@@ -286,7 +286,6 @@ def process_video(
         ball_median=ball_median,
         timings=timings,
         sims=sims,
-        storage=cfg.storage,
         venue=venue,
         grade_basis=basis,
         bodies=bodies,
@@ -369,9 +368,6 @@ def write_swing(
     )
     zoom = render.fit(strip, cfg.frame_long_edge, cfg.frame_max_pixels)
     render.save_jpeg(zoom, out / "05-impact-zoom.jpg", cfg.jpeg_quality)
-    render.save_jpeg_within(
-        lambda edge: render.fit(strip, edge), out / "05-impact-zoom-small.jpg", cfg.small_max_bytes
-    )
 
     swing_s = (swing.track.times >= positions.address_s - CROP_PAD_S) & (
         swing.track.times <= positions.finish_s + CROP_PAD_S
@@ -387,11 +383,6 @@ def write_swing(
         labels.append(f"{name} {video_time(ft)}")
     sheet = render.grid(panels, labels, 4, cfg.frame_long_edge, cfg.frame_max_pixels)
     render.save_jpeg(sheet, out / "06-sequence.jpg", cfg.jpeg_quality)
-    render.save_jpeg_within(
-        lambda edge: render.grid(panels, labels, 4, edge, cfg.frame_max_pixels),
-        out / "06-sequence-small.jpg",
-        cfg.small_max_bytes,
-    )
 
     # On a simulator or launch monitor the screen shows this shot's numbers only seconds
     # after impact; every earlier frame shows the previous shot's.
@@ -407,11 +398,6 @@ def write_swing(
     frame = render.fit(img, cfg.frame_long_edge, cfg.frame_max_pixels)
     text = f"after shot {video_time(ft)}"
     render.save_jpeg(render.label(frame, text), out / "07-after-shot.jpg", cfg.jpeg_quality)
-    render.save_jpeg_within(
-        lambda edge: render.label(render.fit(frame, edge), text),
-        out / "07-after-shot-small.jpg",
-        cfg.small_max_bytes,
-    )
 
     write_pose_csv(swing.track, out / "pose.csv", positions.impact_s, clip_start, info.fps)
     body = body_measures(swing.track, positions)

@@ -17,7 +17,7 @@ from golf_etl.session import INDEX, SUMMARY, write_index
 from golf_etl.storage.retention import SweepReport
 from golf_etl.storage.store import MARKER, SESSIONS
 
-EXCLUDE = ("clip.mp4", "*-small.jpg")  # fnmatch on file names
+EXCLUDE = ("clip.mp4",)  # fnmatch on file names
 KNOWN_HOSTS = Path(__file__).with_name("github_known_hosts")
 IDENTITY = {
     "GIT_AUTHOR_NAME": "golf-etl",
