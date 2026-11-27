@@ -8,10 +8,8 @@ import pytest
 from golf_etl.config import Settings
 from golf_etl.pipeline import SessionResult
 from golf_etl.storage.poller import Poller
-from golf_etl.storage.publish import DrivePublisher
-from golf_etl.storage.retention import sweep_sessions
 from golf_etl.storage.store import STATE, State
-from tests.fake_store import FakeStore
+from tests.fake_store import FakePublisher, FakeStore
 
 
 class FakeProcess:
@@ -46,7 +44,7 @@ def env(tmp_path):
     def run():
         return Poller(
             store,
-            DrivePublisher(store, Settings()),
+            FakePublisher(store),
             Settings(),
             process,
             tmp_path / "scratch",
@@ -138,14 +136,6 @@ def test_reupload_after_success_replaces_the_session(env):
     assert store.tree().count(f"sessions/{sid}/swing-01/01-address.jpg") == 1
 
 
-def test_same_filename_different_content_makes_two_sessions(env):
-    store, process, run = env
-    store.add_video("IMG_1.MOV", data=b"monday")
-    store.add_video("IMG_1.MOV", data=b"friday")  # Drive allows the same name twice
-    run()
-    assert len(sessions(store)) == 2
-
-
 def test_first_and_second_failures_go_back_to_the_inbox(env):
     store, process, run = env
     store.add_video("bad.MOV", data=b"bad")
@@ -206,61 +196,6 @@ def test_reupload_of_a_failed_video_clears_it_and_starts_fresh(env):
     assert store.names_in("failed") == []
     assert len(report.published) == 1
     assert attempts(store, b"data") == 0
-
-
-def test_crash_after_upload_keeps_the_previous_session(env, monkeypatch):
-    store, process, run = env
-    store.add_video("IMG_1.MOV", data=b"same")
-    sid = run().published[0]
-    store.add_video("IMG_1.MOV", data=b"same")
-    real_move = store.move
-
-    def die_on_swap(src, dst):
-        if dst.endswith(f".old-{sid}"):
-            raise RuntimeError("killed")
-        real_move(src, dst)
-
-    monkeypatch.setattr(store, "move", die_on_swap)
-    run()
-    assert f"sessions/{sid}/swing-01/01-address.jpg" in store.tree()
-
-
-def test_crash_between_the_swap_renames_then_a_failed_upload_keeps_a_session(env, monkeypatch):
-    store, process, run = env
-    store.add_video("IMG_1.MOV", data=b"same")
-    sid = run().published[0]
-    real_move, real_upload = store.move, store.upload_tree
-
-    def die_after_moving_the_old_one(src, dst):
-        if dst == f"sessions/{sid}":
-            raise RuntimeError("killed")
-        real_move(src, dst)
-
-    monkeypatch.setattr(store, "move", die_after_moving_the_old_one)
-    store.add_video("IMG_1.MOV", data=b"same")
-    run()
-    assert f".old-{sid}" in sessions(store)
-    monkeypatch.setattr(store, "move", real_move)
-
-    def die_uploading(src, dst):
-        raise RuntimeError("killed mid-upload")
-
-    monkeypatch.setattr(store, "upload_tree", die_uploading)
-    store.add_video("IMG_1.MOV", data=b"same")
-    run()
-    monkeypatch.setattr(store, "upload_tree", real_upload)
-    sweep_sessions(store, Settings(), store.now + timedelta(days=2))
-    assert f"sessions/{sid}/swing-01/01-address.jpg" in store.tree()
-
-
-def test_leftover_temp_folder_is_replaced_on_the_next_publish(env):
-    store, process, run = env
-    store.add_video("IMG_1.MOV", data=b"same")
-    sid = run().published[0]
-    store.mkdir(f"sessions/.tmp-{sid}")
-    store.add_video("IMG_1.MOV", data=b"same")
-    run()
-    assert sessions(store) == [sid]
 
 
 def test_one_bad_video_does_not_stop_the_others(env):

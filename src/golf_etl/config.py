@@ -37,9 +37,6 @@ class Settings:
     frame_long_edge: int = 2560
     frame_max_pixels: int = 3_700_000  # Claude reads up to about 3.75MP
     jpeg_quality: int = 90
-    # the Drive connector returns at most about 100,000 characters per read, and base64 makes
-    # a file 4/3 larger, so phone copies stay under this
-    small_max_bytes: int = 72_000
     clip_long_edge: int = 1920
     clip_crf: int = 23
     # ball flight grade, as fractions of the session's median ball speed
@@ -50,17 +47,12 @@ class Settings:
     smash_good: float = 0.97
     smash_poor: float = 0.92
     smash_min_reads: int = 3
-    # storage: remote is the inbox and sessions in drive mode, inbox_root the inbox in github mode
-    storage: str = "github"
+    # storage: inbox_root is the inbox, sessions go to sessions_repo
     inbox_root: str = "/data"
     sessions_repo: str = "git@github.com:rumstead/golf-sessions.git"
     ssh_key_path: str = "/etc/golf-etl/ssh/id_ed25519"
-    remote: str = "gdrive:golf"  # rclone remote and folder; a local path works too
     max_attempts: int = 3
     failed_ttl_days: int = 3
-    clip_ttl_days: int = 14
-    session_ttl_days: int = 60
-    max_bytes: int = 3 * 1024**3
     scratch_dir: str = "/scratch"
     # the upload page: tusd writes to upload_dir, on the same volume as the inbox
     upload_dir: str = "/data/uploads"

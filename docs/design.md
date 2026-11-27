@@ -2,7 +2,7 @@
 
 golf-etl turns phone videos of golf swings into per-swing frames that Claude can read. A video in the inbox folder is picked up, each swing is found and sliced, and labeled frames are pushed to a private GitHub repo, `rumstead/golf-sessions`. Coaching happens in claude.ai: add `golf-sessions` with **+ > Add from GitHub** and ask it to review the latest session. The claude.ai GitHub integration reads the full-size images directly.
 
-This repo owns the pipeline. The deployment (namespace, CronJob, volume, SOPS secrets, Argo CD Application) lives in [rumstead/homelab](https://github.com/rumstead/homelab). Setting `GOLF_STORAGE=drive` switches to the alternative mode described under Drive mode.
+This repo owns the pipeline. The deployment (namespace, CronJob, volume, SOPS secrets, Argo CD Application) lives in [rumstead/homelab](https://github.com/rumstead/homelab).
 
 ## Context
 Swing videos come from an iPhone on a tripod. Two shapes show up: long range sessions (5 to 20 minutes, many swings, impact sounds from neighboring bays) and short clips with a single swing. Uploads happen from the range, off the home LAN.
@@ -16,7 +16,7 @@ Claude reads images up to 2576px on the long edge (about 3.75MP) on current mode
   - Get per-swing frames into the sessions repo within a few minutes of a video landing in the inbox, with no other steps
   - Frames clear enough for Claude to judge body positions at address, top, impact, and finish, and to read launch monitor numbers
   - Never process the same video into two sessions, and reprocess by re-sending it
-  - Keep the inbox small: originals are deleted once published, failed ones after 3 days. In drive mode, also keep Drive usage bounded on a personal Gmail quota
+  - Keep the inbox small: originals are deleted once published, failed ones after 3 days
 - Non-Goals:
   - Judging strike location on the clubface. At 120fps slo-mo the contact frame shows up in the impact zoom for wedge-speed swings, but at full driver speed the clubhead still moves about 19cm between frames at 240fps, so it is not guaranteed. Impact tape or foot spray photos are a follow-up
   - Publishing clips or the original video. A swing is found in the original by its time in the video
@@ -44,7 +44,7 @@ claude.ai: + > Add from GitHub > golf-sessions, "review my latest golf session"
 
 ### Upload and trigger
 - **A folder inbox, polled.** The cluster has no public ingress, so nothing can push a notification to it. Polling every 3 minutes keeps a video's wait to about 3 minutes. The inbox is the folder at `GOLF_INBOX_ROOT` (default `/data`); whatever fills it must leave only complete videos in `inbox/`. Alternatives: in-cluster S3 needs a way in from off the LAN; a watcher that spawns a Job per video adds moving parts for one upload per range trip.
-- **The inbox is read through the `rclone` binary pointed at a local path**, the same code that reads a Drive remote, so both modes share one `Store` interface (list, move, download, delete, state file). Sessions go through a separate `Publisher` interface: `GitHubPublisher` or, in drive mode, `DrivePublisher`.
+- **The inbox sits behind a `Store` interface** (list, move, download, delete, state file) that `LocalStore` implements on the folder. Sessions go through a separate `Publisher` interface, implemented by `GitHubPublisher`.
 - **Sessions go to GitHub over SSH with a deploy key** that has write access to `golf-sessions` only and does not expire. The key is read from `GOLF_SSH_KEY_PATH` (default `/etc/golf-etl/ssh/id_ed25519`). GitHub's host keys are pinned in the package (`github_known_hosts`) and checked strictly, so there is no first-use trust. The repo is `GOLF_SESSIONS_REPO` (default `git@github.com:rumstead/golf-sessions.git`); a `file://` URL needs no key.
 
 ### Upload page
@@ -83,10 +83,10 @@ sessions/
       pose.csv
       sim.json
 ```
-`sim.json` is written only for sessions where the simulator panel is found. `clip.mp4` and the `-small.jpg` copies are not published. Non-video files in `inbox/` are left alone (strike photos will use them later).
+`sim.json` is written only for sessions where the simulator panel is found. `clip.mp4` is not published. Non-video files in `inbox/` are left alone (strike photos will use them later).
 
 ### Identity and idempotency
-- **Identity is the SHA-256 of the video.** rclone computes it for a local file, so filenames like `IMG_1234.MOV` repeating across days do not matter. A file without a hash is skipped until the next poll.
+- **Identity is the SHA-256 of the video.** The inbox listing computes it for each file, so filenames like `IMG_1234.MOV` repeating across days do not matter. A file without a hash is skipped until the next poll.
 - **Session ID** is `<capture time YYYY-MM-DD-HHMM>-<first 8 hex of the hash>`. Capture time comes from the video's `creation_time` (ffprobe), falling back to the file's modified time. Each session folder holds a `.golf-etl.json` marker with `{sha256, sourceName, pipelineVersion, published, venue}`.
 - **State** lives in `.golf-etl/state.json` under the inbox root, which is safe with a single writer since runs never overlap. It holds `attempts` (retry counts by hash) and `recent`: the latest status of the last 50 uploads, newest first, each with `name`, `sha256`, `status` (`processing`, `retrying`, `failed`, or `published`), `updated`, and the `session` id or the last line of the `error`. A video appears once, with its latest status.
 - **Claiming**: a video is moved from `inbox/` to `processing/` before any work. Runs never overlap and a failed run is not restarted in place (see Runtime contract), so anything in `processing/` when a run starts belongs to a dead run. It is moved back to `inbox/` with its retry count incremented and retried in the same run.
@@ -112,7 +112,7 @@ None of these are errors. A copy uploaded while a run is processing the same vid
 All thresholds live in a config module with environment variable overrides (`GOLF_ONSET_MIN_GAP_S`, `GOLF_CONFIRM_WINDOW_MS`, and so on) so tuning does not need a rebuild.
 
 ### Slicing and frames
-- **Clip**: impact minus 2.5s to impact plus 1.5s, re-encoded (stream copy snaps to keyframes) to 1080p long edge, H.264 CRF 23, AAC. It is cut in scratch for ball tracking and discarded with the scratch directory. In drive mode it is also published.
+- **Clip**: impact minus 2.5s to impact plus 1.5s, re-encoded (stream copy snaps to keyframes) to 1080p long edge, H.264 CRF 23, AAC. It is cut in scratch for ball tracking and discarded with the scratch directory.
 - **Frames are decoded from the original video**, never from the re-encoded clip. HDR video (HLG or PQ, the iPhone default) is tone mapped to SDR BT.709 so frames are not flat and washed out. Portrait rotation is applied.
   - Address: end of the last still stretch (0.2s or more) of the hands before the top
   - Top: highest hands in the 2s before impact
@@ -130,7 +130,6 @@ All thresholds live in a config module with environment variable overrides (`GOL
 - `sessions/index.md` has one row per session, oldest first: venue, swings, grade counts, and the medians of club speed, ball speed, smash, raw carry, peak height, path, face to path, face to target, side spin, launch and tempo. The publisher rebuilds it from every session's `summary.json` on each publish. A session without one has a row with the venue from its marker.
 - `summary.json` also has `per_swing`: each swing's grade, camera view, and every Sim, Timing, Body and Strike number session.md has for it.
 - `sessions/chain.md` pools every published down-the-line swing of one club (a session without a `club` is a 7 iron; mixed sessions stay out) to say which faults travel with strike quality. Each number is the swing's value minus its session's median, so camera position and day drop out, and a session needs 4 values of a measure for it to count. Spine loss is `spine_address` minus `spine_impact`. The first table gives each measure's rank correlation (Spearman) with ball speed (sim swings only) and with strike, with its swing count and how many sessions it came from. It starts with the golfer's takeaway and halfway-back labels (1 for a level or set club, 0 for a hanging one, taken as they are) and swing order (the swing's place in its session, so warm-up shows up when ball speed climbs with it), then Spine loss with Hips impact side beside it, because some of the spine angle's change is the shoulders turning. The second table counts swings by takeaway, posture kept or lost, and strike near or off. The takeaway is the golfer's by-eye label for the swing's takeaway panel in `sessions/takeaway-labels.csv` (columns `session, swing, label, side, by, date`, and an optional `position`: `takeaway` when blank, or `halfway` for the halfway-back panel; label `hanging`, `level`, `set` or `unreadable`, side optional), which the pipeline only reads: hanging against level or set, with unreadable and unlabeled swings in their own rows, never counted as hanging. A later row for a swing wins, and rows that cannot be used are named in the file. Posture is lost when spine loss is over the pooled median, and strike is measured from the median strike of the session's good swings (from the session's median when it has fewer than two), off when it is farther than the pooled median distance, with the mean signed distance per row. A count under 10 swings is marked too few to read. Each club then repeats both tables for sessions from 2026-10-31 on. The publisher rebuilds it with the index.
-- **Drive mode** also writes `06-sequence-small.jpg`, `05-impact-zoom-small.jpg`, and `07-after-shot-small.jpg`: the same images at the largest size and JPEG quality that fits `GOLF_SMALL_MAX_BYTES` (72,000 bytes), because the Drive connector returns file contents as base64 capped at about 100,000 characters per read. Their labels are drawn at the small size. They and `clip.mp4` are never pushed to GitHub, and in drive mode `session.md` names them and `pose.csv` counts frames in `clip.mp4`.
 - Recording tip for the README: in daylight, 240fps slo-mo usually helps the impact frames more than 4K does because the faster shutter cuts blur. Both work.
 
 ### Shaft angle (spike)
@@ -193,22 +192,8 @@ The simulator draws its numbers in a 2x6 panel at the top right of the screen. T
 
 ### Publishing to GitHub
 - Each publish starts from an empty work directory under `GOLF_SCRATCH_DIR`: a depth-1, blob-filtered fetch of `main` with only that session checked out, plus `index.md`, `chain.md` and every session's `summary.json` and marker, which they are built from. A run never downloads the repo's history however many sessions it holds.
-- The session folder is replaced, the marker written, `sessions/index.md` and `sessions/chain.md` rebuilt, and one commit `publish <session-id>` is pushed to `main` as `golf-etl <golf-etl@localhost>`. `clip.mp4` and `*-small.jpg` are left out.
+- The session folder is replaced, the marker written, `sessions/index.md` and `sessions/chain.md` rebuilt, and one commit `publish <session-id>` is pushed to `main` as `golf-etl <golf-etl@localhost>`. `clip.mp4` is left out.
 - The same code can verify a push: `published_files` lists a session's paths and sizes as the remote has them.
-
-### Drive mode
-`GOLF_STORAGE=drive` keeps the Drive layout: the inbox, `processing/`, `failed/`, the state file, and `sessions/` all live in the Drive folder `GOLF_REMOTE` (default `gdrive:golf`). Everything else in this document applies, with these differences:
-- Identity is Drive's `sha256Checksum`, falling back to `md5Checksum`, so no download is needed. A file with neither yet is skipped until the next poll.
-- Access is through rclone with its own verified OAuth app and the full `drive` scope. `RCLONE_CONFIG_GDRIVE_TYPE=drive`, `RCLONE_CONFIG_GDRIVE_SCOPE=drive`, `RCLONE_CONFIG_GDRIVE_TOKEN` (the JSON from `rclone authorize "drive"`) and `RCLONE_DRIVE_USE_TRASH=false` are set in the environment.
-- A session is written to `sessions/.tmp-<id>/`, any existing `sessions/<id>/` is permanently deleted, and the temp folder is renamed into place.
-- Each swing also has `clip.mp4` and the three `-small.jpg` copies.
-- Originals are removed with `files.delete` (permanent), since trashed files still count against quota.
-- The sweep also enforces the Drive budget:
-  - `clip.mp4` files older than 14 days are permanently deleted (`GOLF_CLIP_TTL_DAYS`)
-  - session folders older than 60 days are permanently deleted (`GOLF_SESSION_TTL_DAYS`)
-  - if session files still total over 3GiB (`GOLF_MAX_BYTES`), the oldest sessions are deleted until they are under; failed originals do not count, since they expire in 3 days anyway
-  - the sweep is one recursive listing of `sessions/`: a clip is any `clip.mp4`, a session's age is its marker's time, and leftover `.tmp-` and `.old-` folders from an interrupted swap are cleaned up or restored
-- Rough sizes: a 30-swing session is about 200MB on day one and about 120MB once clips expire.
 
 ### Failures
 - Each video is processed inside its own try block. On an exception `attempts` is incremented and the video goes back to `inbox/`. On the third failure it moves to `failed/` with `<name>.error.txt` holding the exception and the last log lines.
@@ -222,22 +207,18 @@ Whatever schedules `golf-etl poll` must guarantee:
 - The deploy key is mounted at `GOLF_SSH_KEY_PATH`; the pipeline exits with status 2 and a message when it is missing
 - About 10Gi of scratch disk at `GOLF_SCRATCH_DIR` (4K/60 is about 400MB per minute) and up to 3Gi of memory
 - Any threshold or TTL overrides as `GOLF_<NAME>` variables
-- In drive mode, the `RCLONE_CONFIG_GDRIVE_*` variables above instead of the deploy key (exit status 2 without the token)
-
-`GOLF_STORAGE` must be `github` (the default) or `drive`; anything else exits with status 2. `poll-drive` is an alias of `poll`.
 
 ## Repo
-- Python 3.12, `requirements.txt` with exact pins, Dockerfile on `python:3.12-slim` with ffmpeg, git, openssh-client, rclone, and the bundled Pose Landmarker lite model.
+- Python 3.12, `requirements.txt` with exact pins, Dockerfile on `python:3.12-slim` with ffmpeg, git, openssh-client, and the bundled Pose Landmarker lite model.
 - CLI:
   - `golf-etl process <video> --out <dir>`: local run, no inbox or GitHub
   - `golf-etl eval <labels.yaml>`: detection precision, recall, and timing error against hand-labeled impact timestamps
-  - `golf-etl poll`: the scheduled entrypoint (alias `poll-drive`)
+  - `golf-etl poll`: the scheduled entrypoint
   - `golf-etl upload-server`: the upload page, its status, and tusd's hooks
-  - `golf-etl migrate-drive [--dry-run]`: one-time move of the sessions in Drive to `golf-sessions`. It exits with status 2 without both the Drive token and the deploy key, and refuses (status 1, listing the entries) while anything is in the Drive `inbox/`, `processing/`, or `failed/`. Each session is copied without `clip.mp4`, `-small.jpg` copies, or `session.zip`, keeping its layout, then deleted from Drive only if the pushed commit has every file at the same size. A session with no marker is kept on Drive. The exit status is 1 when any session was kept
 - Tests:
   - onset detection against synthetic audio (clicks plus noise)
   - frame selection against canned pose sequences
-  - every row of the idempotency table and every failure scenario against a fake store (`tests/fake_store.py`); the inbox and Drive layer sit behind the small `Store` interface for this
+  - every row of the idempotency table and every failure scenario against a fake store (`tests/fake_store.py`); the inbox layer sits behind the small `Store` interface for this
   - the GitHub publisher against a local bare repo reached by `file://`
   - synthetic videos generated with ffmpeg inside the tests (test pattern, clicks, HDR, rotation)
   - real footage kept out of git in `local/` with a `local/labels.yaml` of hand-labeled impact times; `pytest -m real` runs eval and full processing on it and skips when it is missing
@@ -271,12 +252,11 @@ Swings are found by audio onsets confirmed by fast hands at hip height at the so
 
 ### Swing frames for Claude
 Each swing gets labeled JPEGs decoded from the original video, 2560px long edge or smaller and never upscaled.
-- **Detected swing**: the folder contains `pose.csv`, `ball.json`, `05-impact-zoom.jpg`, `06-sequence.jpg`, and `07-after-shot.jpg`, each JPEG sRGB and labeled with position and time in the video. It has no `clip.mp4` or `-small.jpg` copies.
+- **Detected swing**: the folder contains `pose.csv`, `ball.json`, `05-impact-zoom.jpg`, `06-sequence.jpg`, and `07-after-shot.jpg`, each JPEG sRGB and labeled with position and time in the video. It has no `clip.mp4`.
 - **Sim readout**: when the panel is found, each swing also has `sim.json` and `session.md` has a `## Sim` table. Cells that cannot be read confidently are blank, never guessed.
 - **Moved tiles**: a readout whose tiles are not where the simulator ships them reads each number under its own name, and numbers that contradict each other are blank.
 - **Left panel**: side spin, launch, side launch and offline are in the Sim table when the left panel is found, read only from frames whose left panel shows the same shared numbers as the readout, and blank otherwise.
 - **Sim grade**: on a sim session with at least 3 smash reads, Grade comes from the sim's smash factor and a swing without a smash read has no grade.
-- **Drive mode**: each swing also has `clip.mp4` and the `-small.jpg` copies under 72,000 bytes.
 - **Impact zoom**: `05-impact-zoom.jpg` shows a native-resolution band at ball height for the frames before, at, and after impact, with the ball in it from either camera angle.
 - **iPhone footage**: HDR, portrait, APAC-plus-AAC `.mov` files process like any other video, with natural color.
 - **Blurry target frame**: for address, top, and finish, a sharper frame within two frames is used instead.
@@ -301,7 +281,6 @@ Each swing's ball flight is graded against the session in `session.md`, so a rev
 - **Original after success**: deleted from the inbox.
 - **Failed originals**: older than 3 days they are deleted, honoring the override.
 - **Sessions on GitHub**: never swept.
-- **Drive mode**: clips older than 14 days and sessions older than 60 days are permanently deleted, and if session files total over 3GiB the oldest sessions are deleted until they are under. Failed originals never evict sessions.
 
 ### Failure handling
 - **Processing error**: on the first or second failure the video returns to `inbox/` with its attempt count incremented.
@@ -318,7 +297,6 @@ The owner's claude.ai coaching skill lives in the ai-loadout repo (github.com/ru
 - Audio onsets at a busy range → pose confirmation plus the eval harness. Rejected candidates in `session.md` make misses visible.
 - The sessions repo only grows → a session is about 0.93 to 2.4MB per swing, and GitHub recommends repos under 10GB.
 - The deploy key can write to `golf-sessions` → it has no other access, and it does not expire.
-- Drive mode relies on rclone's shared OAuth app and full `drive` scope → the token only reaches the owner's account; rclone's app shares Google API quota with other rclone users, which a few calls every 3 minutes does not approach.
 
 ## Follow-ups
 - The upload page that fills the inbox

@@ -54,7 +54,6 @@ class Poller:
         ensure_layout(self.inbox)
         self.state = State.load(self.inbox)
         self.recover()
-        self.inbox.dedupe(INBOX)
         groups: dict[str, list[Entry]] = defaultdict(list)
         for e in self.inbox.list(INBOX, hashes=True):
             if e.is_video and e.sha256:

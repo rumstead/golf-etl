@@ -32,7 +32,6 @@ def session(tmp_path, sid):
     (root / "swing-01").mkdir(parents=True)
     (root / "session.md").write_text(f"# {sid}\n")
     (root / "swing-01" / "06-sequence.jpg").write_bytes(f"sequence {sid}".encode())
-    (root / "swing-01" / "06-sequence-small.jpg").write_bytes(b"small")
     (root / "swing-01" / "clip.mp4").write_bytes(b"clip")
     (root / "swing-01" / "pose.csv").write_text(f"frame,session\n1,{sid}\n")
     return root
@@ -47,13 +46,12 @@ def test_first_publish_to_an_empty_repo_creates_main(pub, remote, tmp_path):
     assert tree(remote) == S1 | INDEX
 
 
-def test_clips_and_small_copies_are_not_published(pub, remote, tmp_path):
+def test_clips_are_not_published(pub, remote, tmp_path):
     pub.publish(session(tmp_path, "s1"), "s1", marker("abc", "IMG_1.MOV", "test", "range"))
     pub.publish(session(tmp_path, "s2"), "s2", marker("def", "IMG_2.MOV", "test", "range"))
     assert tree(remote) == S1 | S2 | INDEX
     names = {p.rsplit("/", 1)[1] for p in tree(remote)}
     assert "clip.mp4" not in names
-    assert "06-sequence-small.jpg" not in names
 
 
 def test_second_session_keeps_the_first(pub, remote, tmp_path):

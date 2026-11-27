@@ -33,11 +33,8 @@ from tests.sim_fixtures import load
 pytestmark = pytest.mark.media
 UPLOADED = datetime(2026, 10, 2, 9, 0, tzinfo=UTC)
 EXPECTED = [
-    "05-impact-zoom-small.jpg",
     "05-impact-zoom.jpg",
-    "06-sequence-small.jpg",
     "06-sequence.jpg",
-    "07-after-shot-small.jpg",
     "07-after-shot.jpg",
     "ball.json",
     "clip.mp4",
@@ -60,8 +57,6 @@ def test_swing_folder_has_every_file_sized_for_claude(tmp_path):
     )
     swing = result.session_dir / "swing-01"
     assert sorted(p.name for p in swing.iterdir()) == EXPECTED
-    for name in (n for n in EXPECTED if n.endswith("-small.jpg")):
-        assert (swing / name).stat().st_size <= Settings().small_max_bytes
     for name in (n for n in EXPECTED if n.endswith(".jpg")):
         with Image.open(swing / name) as img:
             assert max(img.size) <= 2560
